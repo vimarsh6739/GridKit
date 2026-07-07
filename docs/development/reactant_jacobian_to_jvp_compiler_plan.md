@@ -197,6 +197,12 @@ marked_attributes.semantic_bridge_runtime_raw_jvp_kernels_require_lowering = 0
 marked_attributes.semantic_bridge_runtime_fwddiff_raw_jvp_kernels = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_fwddiff_calls = 2
 marked_attributes.semantic_bridge_runtime_context_input_calls = 4
+marked_attributes.semantic_bridge_runtime_raw_context_input_indices_attrs = 1
+marked_attributes.semantic_bridge_runtime_raw_non_model_context_input_indices_attrs = 1
+marked_attributes.semantic_bridge_runtime_raw_context_input_count_attrs = 1
+marked_attributes.semantic_bridge_runtime_context_input_indices_attrs = 3
+marked_attributes.semantic_bridge_runtime_non_model_context_input_indices_attrs = 3
+marked_attributes.semantic_bridge_runtime_context_input_count_attrs = 3
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_calls = 1
 marked_attributes.semantic_bridge_runtime_context_input_declarations = 1
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_declarations = 1
@@ -390,7 +396,13 @@ kernel calls the recovered Enzyme `__enzyme_fwddiff` wrappers for `y` and `yp`,
 passes the IDA vector `v` as the `y` tangent, passes `tmp1Data` as the
 `yp = cj * v` tangent, and accumulates the two contributions through
 `__enzymexla_sundials_ida_accumulate_raw_jvp`. Non-SUNDIALS residual inputs are
-loaded through `__enzymexla_sundials_ida_context_input(user_data, index)`.
+loaded through `__enzymexla_sundials_ida_context_input(user_data, index)`. The
+generated raw kernel records `enzymexla.sundials.context_input_indices = [0, 3]`,
+`enzymexla.sundials.non_model_context_input_indices = [3]`, and
+`enzymexla.sundials.context_input_count = 4 : i64`; the solve plus generated
+setup/registration helpers carry the matching `runtime_*` context-input
+contract, so the later host splice no longer has to infer the residual input
+array shape from callback body calls.
 GridKit now provides a reusable `IdaJvpUserData` support layer with C ABI entry
 points for creating, registering, destroying, and discovering generated callback
 contexts, unwrapping the original model pointer for legacy residual/Jacobian
@@ -399,7 +411,8 @@ contributions. Generated contexts copy the residual input pointer slots at
 creation time, so a compiler-generated setup call can assemble a temporary
 pointer array without leaving the later IDA callback with a dangling array
 reference. The remaining executable gap is host splicing: lowered code still
-has to build the residual input pointer array, call the generated context setup
+has to use the recorded context-input contract to build the residual input
+pointer array, call the generated context setup
 helper from the host configuration path, keep the returned context pointer alive
 for IDA, and call the generated teardown helper when the solver no longer needs
 the callback. The setup helper now derives the output size from the IDA `yy`
