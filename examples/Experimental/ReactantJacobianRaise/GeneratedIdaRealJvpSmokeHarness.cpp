@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -73,6 +74,28 @@ namespace
 
   int sun_linear_solver_allocations = 0;
   int sun_linear_solver_frees       = 0;
+
+  struct TimingStats
+  {
+    std::int64_t iterations{};
+    double       total_us{};
+    double       avg_us{};
+  };
+
+  template <typename Fn>
+  TimingStats timeRepeated(std::int64_t iterations, Fn&& fn)
+  {
+    using clock = std::chrono::steady_clock;
+    const auto start = clock::now();
+    for (std::int64_t iteration = 0; iteration < iterations; ++iteration)
+    {
+      fn();
+    }
+    const auto elapsed = std::chrono::duration<double, std::micro>(
+                             clock::now() - start)
+                             .count();
+    return {iterations, elapsed, elapsed / static_cast<double>(iterations)};
+  }
 
   bool check(bool condition, const char* message)
   {
@@ -267,6 +290,7 @@ int main()
   constexpr double cj  = 1.75;
   constexpr double eps = 1.0e-6;
   constexpr double tol = 3.0e-6;
+  constexpr std::int64_t timing_iterations = 100;
 
   GridKit::PhasorDynamics::Bus<ScalarT, IdxT> bus(1.04, -0.08);
   GenT gen(&bus, 0.8, 0.2, 3.5, 0.15, 0.0, 0.22);
@@ -427,9 +451,64 @@ int main()
   const bool vectors_match = compareVectors(jv, finite_difference, tol);
   const bool matrix_free_match = compareVectors(jv, matrix_free_jv, tol);
   const bool explicit_csr_match = compareVectors(jv, explicit_csr_jv, tol);
+
+  bool timed_generated_jvp_ok = true;
+  const TimingStats generated_jvp_timing =
+      timeRepeated(timing_iterations, [&]()
+                   {
+                     std::fill(jv.begin(), jv.end(), 0.0);
+                     std::fill(tmp1.begin(), tmp1.end(), 0.0);
+                     std::fill(tmp2.begin(), tmp2.end(), 0.0);
+                     timed_generated_jvp_ok =
+                         timed_generated_jvp_ok &&
+                         ida_mem.jac_times(0.125,
+                                           &yy,
+                                           &yp_vector,
+                                           &rr,
+                                           &vv,
+                                           &jv_vector,
+                                           cj,
+                                           generated_context,
+                                           &tmp1_vector,
+                                           &tmp2_vector) == 0;
+                   });
+
+  const TimingStats matrix_free_timing =
+      timeRepeated(timing_iterations, [&]()
+                   {
+                     std::fill(matrix_free_jv.begin(),
+                               matrix_free_jv.end(),
+                               0.0);
+                     gridkitGeneratedIdaMatrixFreeInternalJvp(
+                         &gen,
+                         y.data(),
+                         v.data(),
+                         yp.data(),
+                         yp_seed.data(),
+                         wb.data(),
+                         wb_seed.data(),
+                         matrix_free_jv.data());
+                   });
+
+  const TimingStats explicit_csr_timing =
+      timeRepeated(timing_iterations, [&]()
+                   {
+                     gridkitGeneratedIdaExplicitSparseInternalJvp(
+                         &gen,
+                         y.data(),
+                         yp.data(),
+                         wb.data(),
+                         bus_variable_indices.data(),
+                         cj,
+                         global_seed.data(),
+                         explicit_csr_jv.data());
+                   });
+
   teardownGeneratedIdaJvp(&ida_mem);
   if (!check(sun_linear_solver_frees == 1,
              "generated teardown did not release remembered linear solver") ||
+      !check(timed_generated_jvp_ok,
+             "timed generated JacTimes callback returned failure") ||
       !check(vectors_match, "generated JVP did not match finite difference") ||
       !check(matrix_free_match, "generated JVP did not match MatrixFree oracle") ||
       !check(explicit_csr_match, "generated JVP did not match explicit CSR J*v"))
@@ -438,6 +517,15 @@ int main()
   }
 
   std::cout << "generated real JVP smoke: ok finite_difference=ok"
-            << " matrix_free_oracle=ok explicit_csr_oracle=ok\n";
+            << " matrix_free_oracle=ok explicit_csr_oracle=ok"
+            << " timing_iterations=" << generated_jvp_timing.iterations
+            << std::fixed << std::setprecision(3)
+            << " generated_jvp_avg_us=" << generated_jvp_timing.avg_us
+            << " generated_jvp_total_us=" << generated_jvp_timing.total_us
+            << " matrix_free_oracle_avg_us=" << matrix_free_timing.avg_us
+            << " matrix_free_oracle_total_us=" << matrix_free_timing.total_us
+            << " explicit_csr_jvp_avg_us=" << explicit_csr_timing.avg_us
+            << " explicit_csr_jvp_total_us=" << explicit_csr_timing.total_us
+            << '\n';
   return 0;
 }

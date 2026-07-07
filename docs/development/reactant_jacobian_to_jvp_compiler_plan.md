@@ -318,9 +318,9 @@ marked_attributes.systemmodel_generated_jvp_sundials_success_lines = 1
 The generated runtime checks now report:
 
 ```text
-generated real JVP smoke: ok finite_difference=ok matrix_free_oracle=ok explicit_csr_oracle=ok
+generated real JVP smoke: ok finite_difference=ok matrix_free_oracle=ok explicit_csr_oracle=ok timing_iterations=100 generated_jvp_avg_us=0.434 generated_jvp_total_us=43.416 matrix_free_oracle_avg_us=0.053 matrix_free_oracle_total_us=5.258 explicit_csr_jvp_avg_us=0.198 explicit_csr_jvp_total_us=19.820
 generated real SUNDIALS component smoke: ok steps=14 residual_evals=19 nonlinear_iters=17 linear_iters=37 jac_times_evals=37 explicit_jacobian_evals=0
-systemmodel generated JVP smoke: ok finite_difference=ok explicit_sparse_oracle=ok matrix_free_oracle=ok
+systemmodel generated JVP smoke: ok finite_difference=ok explicit_sparse_oracle=ok matrix_free_oracle=ok timing_iterations=100 generated_jvp_avg_us=0.043 generated_jvp_total_us=4.336 explicit_sparse_jvp_avg_us=0.187 explicit_sparse_jvp_total_us=18.659 matrix_free_oracle_avg_us=0.043 matrix_free_oracle_total_us=4.306
 generated SystemModel SUNDIALS smoke: ok steps=18 residual_evals=25 nonlinear_iters=23 linear_iters=104 jac_times_evals=104 explicit_jacobian_evals=0
 ```
 
@@ -952,8 +952,12 @@ B raised before JVP optimization: not executable as a separate solver path
 C compiler-generated JVP + iterative IDA: ok
   component smoke: steps=14 residual_evals=19 nonlinear_iters=17
     linear_iters=37 jac_times_evals=37 explicit_jacobian_evals=0
+  component standalone JVP timing: generated=0.434us,
+    explicit CSR J*v=0.198us, MatrixFree oracle=0.053us, iterations=100
   SystemModel smoke: steps=18 residual_evals=25 nonlinear_iters=23
     linear_iters=104 jac_times_evals=104 explicit_jacobian_evals=0
+  SystemModel standalone JVP timing: generated=0.043us,
+    explicit sparse J*v=0.187us, MatrixFree oracle=0.043us, iterations=100
 
 D hand-written MatrixFree JVP prototype: ok as an oracle only
   finite-difference, explicit CSR/sparse, and MatrixFree checks all pass
@@ -963,9 +967,11 @@ The report explicitly sets `direct_speedup_claim = false`. The current evidence
 separates materialization avoidance from solver choice: the generated path
 proves automatic JacTimes registration, JVP activity, and zero solver-time
 explicit Jacobian evaluations, but it changes the linear solver from KLU direct
-to SPGMR iterative. Derivative wall time, sparse assembly time, JVP wall time,
-memory, and KLU iteration/Jacobian counters still require additional
-instrumentation before they can be used for a performance claim.
+to SPGMR iterative. Standalone smoke microbenchmarks now report generated JVP
+and explicit sparse `J*v` timings for the tiny component and SystemModel-layout
+cases. Solver-integrated callback wall time, memory, and KLU iteration/Jacobian
+counters still require additional instrumentation before they can be used for a
+performance claim.
 
 ## Current Reactant Limitation
 
