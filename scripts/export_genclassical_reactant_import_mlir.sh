@@ -9,12 +9,21 @@ out_dir="${1:-${gridkit_root}/build/reactant-jacobian-export/reactant}"
 src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GenClassicalSparseJacobianHarness.cpp"
 ida_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GridKitIdaSparseHostHarness.cpp"
 runtime_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRuntimeGlueSmokeHarness.cpp"
+runtime_real_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRealJvpSmokeHarness.cpp"
 
 reactant_root="${REACTANT_ROOT:-${workspace_root}/Reactant/enzyme}"
 reactant_cxx="${REACTANT_CXX:-${reactant_root}/bazel-bin/reactant-clang++}"
 runtime_smoke_cxx="${GRIDKIT_REACTANT_RUNTIME_SMOKE_CXX:-${CXX:-$(command -v c++ || true)}}"
+default_derivative_enzyme_cxx="${workspace_root}/../Enzyme/enzyme/bazel-bin/enzyme-clang++"
+if [[ ! -x "${default_derivative_enzyme_cxx}" &&
+      -x "${workspace_root}/Enzyme/enzyme/bazel-bin/enzyme-clang++" ]]; then
+  default_derivative_enzyme_cxx="${workspace_root}/Enzyme/enzyme/bazel-bin/enzyme-clang++"
+fi
+derivative_enzyme_cxx="${GRIDKIT_REACTANT_ENZYME_CXX:-${default_derivative_enzyme_cxx}}"
+derivative_resource_dir="${GRIDKIT_REACTANT_ENZYME_RESOURCE_DIR:-}"
 resource_dir="${REACTANT_RESOURCE_DIR:-}"
 gridkit_build_include="${GRIDKIT_REACTANT_GRIDKIT_BUILD_INCLUDE:-${gridkit_root}/build/gridkit-enzyme-jvp-wrapper}"
+sparse_matrix_lib="${GRIDKIT_REACTANT_SPARSE_MATRIX_LIB:-${gridkit_build_include}/GridKit/LinearAlgebra/SparseMatrix/libgridkit_sparse_matrix.so}"
 sundials_shim_include="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/sundials_shim/include"
 export_ida_host="${GRIDKIT_REACTANT_EXPORT_IDA_HOST:-1}"
 
@@ -27,6 +36,7 @@ enzymexlamlir_opt="${ENZYMEXLAMLIR_OPT:-${workspace_root}/Enzyme-JAX/bazel-bin/e
 mlir_translate="${MLIR_TRANSLATE:-$(command -v mlir-translate || true)}"
 llc_tool="${LLC:-$(command -v llc || true)}"
 llvm_nm_tool="${LLVM_NM:-$(command -v llvm-nm || true)}"
+llvm_objcopy_tool="${LLVM_OBJCOPY:-$(command -v llvm-objcopy || true)}"
 marked_mlir="${out_dir}/genclassical_reactant_marked_sparse_jacobian.mlir"
 marker_log="${out_dir}/genclassical_reactant_marker.log"
 
@@ -51,6 +61,13 @@ bridge_runtime_symbols="${out_dir}/gridkit_semantic_bridge_runtime_glue_symbols.
 bridge_runtime_undefined_symbols="${out_dir}/gridkit_semantic_bridge_runtime_glue_undefined_symbols.txt"
 bridge_runtime_smoke_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_smoke"
 bridge_runtime_smoke_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_smoke.log"
+bridge_generated_derivative_src="${out_dir}/gridkit_generated_ida_jvp_derivative.cpp"
+bridge_generated_derivative_named_object="${out_dir}/gridkit_generated_ida_jvp_derivative_named.o"
+bridge_generated_derivative_object="${out_dir}/gridkit_generated_ida_jvp_derivative.o"
+bridge_generated_derivative_compile_log="${out_dir}/gridkit_generated_ida_jvp_derivative_compile.log"
+bridge_generated_derivative_rename_log="${out_dir}/gridkit_generated_ida_jvp_derivative_rename.log"
+bridge_runtime_real_smoke_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke"
+bridge_runtime_real_smoke_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke.log"
 
 default_imported_mlir="${out_dir}/genclassical_reactant_default_imported.mlir"
 default_object_file="${out_dir}/genclassical_reactant_default.o"
@@ -132,9 +149,10 @@ extract_string_attr() {
   printf '%s\n' "${line}" | sed -n "s/.*${key} = \"\\([^\"]*\\)\".*/\\1/p"
 }
 
-find_resource_dir() {
+find_resource_dir_for() {
+  local clang_cxx="$1"
   local real_cxx
-  real_cxx="$(readlink -f "${reactant_cxx}")"
+  real_cxx="$(readlink -f "${clang_cxx}")"
   local bin_dir
   bin_dir="$(dirname "${real_cxx}")"
   local candidate
@@ -148,6 +166,10 @@ find_resource_dir() {
     fi
   done
   return 1
+}
+
+find_resource_dir() {
+  find_resource_dir_for "${reactant_cxx}"
 }
 
 if [[ ! -x "${reactant_cxx}" ]]; then
@@ -167,6 +189,10 @@ if [[ -z "${resource_dir}" ]]; then
     } >&2
     exit 1
   fi
+fi
+
+if [[ -z "${derivative_resource_dir}" && -x "${derivative_enzyme_cxx}" ]]; then
+  derivative_resource_dir="$(find_resource_dir_for "${derivative_enzyme_cxx}" || true)"
 fi
 
 mkdir -p "${out_dir}"
@@ -276,6 +302,14 @@ bridge_runtime_smoke_attempted="false"
 bridge_runtime_smoke_skipped_reason=""
 bridge_runtime_smoke_compile_status=""
 bridge_runtime_smoke_run_status=""
+bridge_generated_derivative_attempted="false"
+bridge_generated_derivative_skipped_reason=""
+bridge_generated_derivative_compile_status=""
+bridge_generated_derivative_rename_status=""
+bridge_runtime_real_smoke_attempted="false"
+bridge_runtime_real_smoke_skipped_reason=""
+bridge_runtime_real_smoke_compile_status=""
+bridge_runtime_real_smoke_run_status=""
 if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
       -f "${ida_marked_mlir}" ]]; then
   materialization_line="$(first_matching_regex "enzymexla\\.jacobian_materialization .*source = \"DfDy\"" "${marked_mlir}")"
@@ -407,6 +441,132 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
                   set -e
                 fi
               fi
+
+              bridge_derivative_fwddiff_y_symbol="_ZN7GridKit6Enzyme6Sparse16__enzyme_fwddiffIvJiPNS_14PhasorDynamics12GenClassicalIdlEEiPKdPdiS8_iS8_iS9_S9_EEET_PvDpT0_"
+              bridge_derivative_fwddiff_yp_symbol="_ZN7GridKit6Enzyme6Sparse16__enzyme_fwddiffIvJiPNS_14PhasorDynamics12GenClassicalIdlEEiPdiS7_S7_iS7_iS7_S7_EEET_PvDpT0_"
+              sparse_matrix_lib_dir="$(dirname "${sparse_matrix_lib}")"
+              if [[ ! -f "${runtime_real_smoke_src}" ]]; then
+                bridge_runtime_real_smoke_skipped_reason="generated real JVP smoke harness not found"
+              elif [[ -z "${runtime_smoke_cxx}" || ! -x "${runtime_smoke_cxx}" ]]; then
+                bridge_runtime_real_smoke_skipped_reason="C++ compiler not found; set GRIDKIT_REACTANT_RUNTIME_SMOKE_CXX or CXX"
+              elif [[ -z "${derivative_enzyme_cxx}" || ! -x "${derivative_enzyme_cxx}" ]]; then
+                bridge_generated_derivative_skipped_reason="Enzyme C++ compiler not found; set GRIDKIT_REACTANT_ENZYME_CXX"
+                bridge_runtime_real_smoke_skipped_reason="${bridge_generated_derivative_skipped_reason}"
+              elif [[ -z "${derivative_resource_dir}" ||
+                      ! -f "${derivative_resource_dir}/include/stddef.h" ]]; then
+                bridge_generated_derivative_skipped_reason="Enzyme clang resource dir not found; set GRIDKIT_REACTANT_ENZYME_RESOURCE_DIR"
+                bridge_runtime_real_smoke_skipped_reason="${bridge_generated_derivative_skipped_reason}"
+              elif [[ -z "${llvm_objcopy_tool}" || ! -x "${llvm_objcopy_tool}" ]]; then
+                bridge_generated_derivative_skipped_reason="llvm-objcopy not found; set LLVM_OBJCOPY"
+                bridge_runtime_real_smoke_skipped_reason="${bridge_generated_derivative_skipped_reason}"
+              elif [[ ! -f "${sparse_matrix_lib}" ]]; then
+                bridge_runtime_real_smoke_skipped_reason="GridKit sparse matrix library not found; set GRIDKIT_REACTANT_SPARSE_MATRIX_LIB"
+              else
+                cat > "${bridge_generated_derivative_src}" <<'DERIVATIVE_EOF'
+#include <GridKit/AutomaticDifferentiation/Enzyme/EnzymeDefinitions.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/ModelWrappers.hpp>
+#include <GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassicalImpl.hpp>
+
+namespace
+{
+  using GenClassicalLong = GridKit::PhasorDynamics::GenClassical<double, long>;
+  constexpr auto internalResidual =
+      GridKit::Enzyme::Sparse::MemberFunctions::InternalResidual;
+} // namespace
+
+extern "C" void gridkitGeneratedIdaDerivativeFwddiffY(
+    void*, int, GenClassicalLong*, int, const double*, double*, int,
+    const double*, int, const double*, int, double*, double*);
+
+extern "C" void gridkitGeneratedIdaDerivativeFwddiffY(
+    void* /*residual*/, int /*model_activity*/, GenClassicalLong* model,
+    int /*y_activity*/, const double* y, double* y_tangent, int /*yp_activity*/,
+    const double* yp, int /*wb_activity*/, const double* wb, int /*out_activity*/,
+    double* residual_primal, double* residual_tangent)
+{
+  GridKit::Enzyme::Sparse::__enzyme_fwddiff<void>(
+      (void*)GridKit::Enzyme::Sparse::ModelWrapper<GenClassicalLong,
+                                                   internalResidual>::eval,
+      enzyme_const, model, enzyme_dup, y, y_tangent, enzyme_const, yp,
+      enzyme_const, wb, enzyme_dupnoneed, residual_primal, residual_tangent);
+}
+
+extern "C" void gridkitGeneratedIdaDerivativeFwddiffYp(
+    void*, int, GenClassicalLong*, int, double*, int, double*, double*, int,
+    double*, int, double*, double*);
+
+extern "C" void gridkitGeneratedIdaDerivativeFwddiffYp(
+    void* /*residual*/, int /*model_activity*/, GenClassicalLong* model,
+    int /*y_activity*/, double* y, int /*yp_activity*/, double* yp,
+    double* yp_tangent, int /*wb_activity*/, double* wb, int /*out_activity*/,
+    double* residual_primal, double* residual_tangent)
+{
+  GridKit::Enzyme::Sparse::__enzyme_fwddiff<void>(
+      (void*)GridKit::Enzyme::Sparse::ModelWrapper<GenClassicalLong,
+                                                   internalResidual>::eval,
+      enzyme_const, model, enzyme_const, y, enzyme_dup, yp, yp_tangent,
+      enzyme_const, wb, enzyme_dupnoneed, residual_primal, residual_tangent);
+}
+DERIVATIVE_EOF
+
+                bridge_generated_derivative_attempted="true"
+                set +e
+                "${derivative_enzyme_cxx}" \
+                  -I"${gridkit_root}/third-party/magic-enum/include" \
+                  -I"${gridkit_build_include}" \
+                  -I"${gridkit_root}" \
+                  -resource-dir "${derivative_resource_dir}" \
+                  -std=gnu++20 -O3 -DNDEBUG -fPIC -fno-math-errno \
+                  -c "${bridge_generated_derivative_src}" \
+                  -o "${bridge_generated_derivative_named_object}" \
+                  > "${bridge_generated_derivative_compile_log}" 2>&1
+                bridge_generated_derivative_compile_status=$?
+                set -e
+
+                if [[ "${bridge_generated_derivative_compile_status}" -eq 0 ]]; then
+                  cp "${bridge_generated_derivative_named_object}" \
+                    "${bridge_generated_derivative_object}"
+                  set +e
+                  "${llvm_objcopy_tool}" \
+                    --redefine-sym "gridkitGeneratedIdaDerivativeFwddiffY=${bridge_derivative_fwddiff_y_symbol}" \
+                    --redefine-sym "gridkitGeneratedIdaDerivativeFwddiffYp=${bridge_derivative_fwddiff_yp_symbol}" \
+                    "${bridge_generated_derivative_object}" \
+                    > "${bridge_generated_derivative_rename_log}" 2>&1
+                  bridge_generated_derivative_rename_status=$?
+                  set -e
+                fi
+
+                if [[ "${bridge_generated_derivative_compile_status}" -eq 0 &&
+                      "${bridge_generated_derivative_rename_status}" -eq 0 ]]; then
+                  bridge_runtime_real_smoke_attempted="true"
+                  set +e
+                  "${runtime_smoke_cxx}" -std=c++20 -O0 -g -pthread \
+                    -ffunction-sections -fdata-sections \
+                    -I"${gridkit_root}" \
+                    -I"${gridkit_build_include}" \
+                    -I"${gridkit_root}/third-party/magic-enum/include" \
+                    "${runtime_real_smoke_src}" \
+                    "${gridkit_root}/GridKit/Solver/Dynamic/IdaJvpRuntime.cpp" \
+                    "${bridge_runtime_object}" \
+                    "${bridge_generated_derivative_object}" \
+                    "${sparse_matrix_lib}" \
+                    -Wl,--gc-sections \
+                    -Wl,-rpath,"${sparse_matrix_lib_dir}" \
+                    -no-pie -lm \
+                    -o "${bridge_runtime_real_smoke_exe}" \
+                    > "${bridge_runtime_real_smoke_log}" 2>&1
+                  bridge_runtime_real_smoke_compile_status=$?
+                  set -e
+
+                  if [[ "${bridge_runtime_real_smoke_compile_status}" -eq 0 ]]; then
+                    set +e
+                    "${bridge_runtime_real_smoke_exe}" \
+                      >> "${bridge_runtime_real_smoke_log}" 2>&1
+                    bridge_runtime_real_smoke_run_status=$?
+                    set -e
+                  fi
+                fi
+              fi
             fi
           fi
         fi
@@ -491,6 +651,26 @@ if [[ -n "${bridge_runtime_smoke_run_status}" ]]; then
 else
   bridge_runtime_smoke_run_exit_json="null"
 fi
+if [[ -n "${bridge_generated_derivative_compile_status}" ]]; then
+  bridge_generated_derivative_compile_exit_json="${bridge_generated_derivative_compile_status}"
+else
+  bridge_generated_derivative_compile_exit_json="null"
+fi
+if [[ -n "${bridge_generated_derivative_rename_status}" ]]; then
+  bridge_generated_derivative_rename_exit_json="${bridge_generated_derivative_rename_status}"
+else
+  bridge_generated_derivative_rename_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_real_smoke_compile_status}" ]]; then
+  bridge_runtime_real_smoke_compile_exit_json="${bridge_runtime_real_smoke_compile_status}"
+else
+  bridge_runtime_real_smoke_compile_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_real_smoke_run_status}" ]]; then
+  bridge_runtime_real_smoke_run_exit_json="${bridge_runtime_real_smoke_run_status}"
+else
+  bridge_runtime_real_smoke_run_exit_json="null"
+fi
 if [[ -n "${default_status}" ]]; then
   default_exit_json="${default_status}"
 else
@@ -553,6 +733,14 @@ printf '    "runtime_smoke_attempted": %s,\n' "${bridge_runtime_smoke_attempted}
 printf '    "runtime_smoke_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_smoke_skipped_reason}")" >> "${summary}"
 printf '    "runtime_smoke_compile_exit_code": %s,\n' "${bridge_runtime_smoke_compile_exit_json}" >> "${summary}"
 printf '    "runtime_smoke_run_exit_code": %s,\n' "${bridge_runtime_smoke_run_exit_json}" >> "${summary}"
+printf '    "generated_derivative_attempted": %s,\n' "${bridge_generated_derivative_attempted}" >> "${summary}"
+printf '    "generated_derivative_skipped_reason": %s,\n' "$(json_string "${bridge_generated_derivative_skipped_reason}")" >> "${summary}"
+printf '    "generated_derivative_compile_exit_code": %s,\n' "${bridge_generated_derivative_compile_exit_json}" >> "${summary}"
+printf '    "generated_derivative_rename_exit_code": %s,\n' "${bridge_generated_derivative_rename_exit_json}" >> "${summary}"
+printf '    "runtime_real_smoke_attempted": %s,\n' "${bridge_runtime_real_smoke_attempted}" >> "${summary}"
+printf '    "runtime_real_smoke_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_real_smoke_skipped_reason}")" >> "${summary}"
+printf '    "runtime_real_smoke_compile_exit_code": %s,\n' "${bridge_runtime_real_smoke_compile_exit_json}" >> "${summary}"
+printf '    "runtime_real_smoke_run_exit_code": %s,\n' "${bridge_runtime_real_smoke_run_exit_json}" >> "${summary}"
 printf '    "input_mlir": %s,\n' "$(json_string "${bridge_mlir}")" >> "${summary}"
 printf '    "selected_mlir": %s,\n' "$(json_string "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "runtime_mlir": %s,\n' "$(json_string "${bridge_runtime_mlir}")" >> "${summary}"
@@ -563,16 +751,28 @@ printf '    "runtime_symbols": %s,\n' "$(json_string "${bridge_runtime_symbols}"
 printf '    "runtime_undefined_symbols": %s,\n' "$(json_string "${bridge_runtime_undefined_symbols}")" >> "${summary}"
 printf '    "runtime_smoke_executable": %s,\n' "$(json_string "${bridge_runtime_smoke_exe}")" >> "${summary}"
 printf '    "runtime_smoke_harness": %s,\n' "$(json_string "${runtime_smoke_src}")" >> "${summary}"
+printf '    "generated_derivative_source": %s,\n' "$(json_string "${bridge_generated_derivative_src}")" >> "${summary}"
+printf '    "generated_derivative_named_object": %s,\n' "$(json_string "${bridge_generated_derivative_named_object}")" >> "${summary}"
+printf '    "generated_derivative_object": %s,\n' "$(json_string "${bridge_generated_derivative_object}")" >> "${summary}"
+printf '    "runtime_real_smoke_executable": %s,\n' "$(json_string "${bridge_runtime_real_smoke_exe}")" >> "${summary}"
+printf '    "runtime_real_smoke_harness": %s,\n' "$(json_string "${runtime_real_smoke_src}")" >> "${summary}"
+printf '    "sparse_matrix_lib": %s,\n' "$(json_string "${sparse_matrix_lib}")" >> "${summary}"
 printf '    "mlir_translate": %s,\n' "$(json_string "${mlir_translate}")" >> "${summary}"
 printf '    "llc": %s,\n' "$(json_string "${llc_tool}")" >> "${summary}"
 printf '    "llvm_nm": %s,\n' "$(json_string "${llvm_nm_tool}")" >> "${summary}"
+printf '    "llvm_objcopy": %s,\n' "$(json_string "${llvm_objcopy_tool}")" >> "${summary}"
 printf '    "runtime_smoke_cxx": %s,\n' "$(json_string "${runtime_smoke_cxx}")" >> "${summary}"
+printf '    "generated_derivative_enzyme_cxx": %s,\n' "$(json_string "${derivative_enzyme_cxx}")" >> "${summary}"
+printf '    "generated_derivative_resource_dir": %s,\n' "$(json_string "${derivative_resource_dir}")" >> "${summary}"
 printf '    "log": %s,\n' "$(json_string "${bridge_log}")" >> "${summary}"
 printf '    "runtime_log": %s,\n' "$(json_string "${bridge_runtime_log}")" >> "${summary}"
 printf '    "runtime_strip_log": %s,\n' "$(json_string "${bridge_runtime_strip_log}")" >> "${summary}"
 printf '    "runtime_translate_log": %s,\n' "$(json_string "${bridge_runtime_translate_log}")" >> "${summary}"
 printf '    "runtime_object_log": %s,\n' "$(json_string "${bridge_runtime_object_log}")" >> "${summary}"
-printf '    "runtime_smoke_log": %s\n' "$(json_string "${bridge_runtime_smoke_log}")" >> "${summary}"
+printf '    "runtime_smoke_log": %s,\n' "$(json_string "${bridge_runtime_smoke_log}")" >> "${summary}"
+printf '    "generated_derivative_compile_log": %s,\n' "$(json_string "${bridge_generated_derivative_compile_log}")" >> "${summary}"
+printf '    "generated_derivative_rename_log": %s,\n' "$(json_string "${bridge_generated_derivative_rename_log}")" >> "${summary}"
+printf '    "runtime_real_smoke_log": %s\n' "$(json_string "${bridge_runtime_real_smoke_log}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "default_pipeline": {\n' >> "${summary}"
 printf '    "attempted": %s,\n' "$([[ "${try_default}" == "1" ]] && printf true || printf false)" >> "${summary}"
@@ -592,7 +792,8 @@ printf '    "semantic_bridge_input_mlir": %s,\n' "$(count_lines "${bridge_mlir}"
 printf '    "semantic_bridge_selected_mlir": %s,\n' "$(count_lines "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(count_lines "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(count_lines "${bridge_runtime_llvm_mlir}")" >> "${summary}"
-printf '    "semantic_bridge_runtime_llvm_ir": %s\n' "$(count_lines "${bridge_runtime_llvm_ir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(count_lines "${bridge_runtime_llvm_ir}")" >> "${summary}"
+printf '    "semantic_bridge_generated_derivative_source": %s\n' "$(count_lines "${bridge_generated_derivative_src}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "matching_lines": {\n' >> "${summary}"
 printf '    "__enzyme_fwddiff": %s,\n' "$(count_matches "__enzyme_fwddiff" "${printed_mlir}")" >> "${summary}"
@@ -719,6 +920,7 @@ printf '    "semantic_bridge_runtime_object_teardown_dispatcher_symbols": %s,\n'
 printf '    "semantic_bridge_runtime_object_jactimes_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_jactimes_" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object_raw_jvp_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_raw_jvp_kernel_" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_smoke_success_lines": %s,\n' "$(count_matches "generated runtime glue smoke: ok" "${bridge_runtime_smoke_log}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_success_lines": %s,\n' "$(count_matches "generated real JVP smoke: ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
 printf '    "gridkit_runtime_evaluator_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/Evaluator.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_component_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/Component.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_genclassical_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassical.hpp")" >> "${summary}"
@@ -774,7 +976,10 @@ printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(json_string "$(file_s
 printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_llvm_ir}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_object}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_undefined_symbols": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_undefined_symbols}")")" >> "${summary}"
-printf '    "semantic_bridge_runtime_smoke_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_smoke_exe}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_smoke_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_smoke_exe}")")" >> "${summary}"
+printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_src}")")" >> "${summary}"
+printf '    "semantic_bridge_generated_derivative_object": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_object}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_smoke_exe}")")" >> "${summary}"
 printf '  }\n' >> "${summary}"
 printf '}\n' >> "${summary}"
 
@@ -822,6 +1027,18 @@ if [[ -f "${bridge_runtime_smoke_exe}" ]]; then
 fi
 if [[ -f "${bridge_runtime_smoke_log}" ]]; then
   echo "wrote ${bridge_runtime_smoke_log}"
+fi
+if [[ -f "${bridge_generated_derivative_src}" ]]; then
+  echo "wrote ${bridge_generated_derivative_src}"
+fi
+if [[ -f "${bridge_generated_derivative_object}" ]]; then
+  echo "wrote ${bridge_generated_derivative_object}"
+fi
+if [[ -f "${bridge_runtime_real_smoke_exe}" ]]; then
+  echo "wrote ${bridge_runtime_real_smoke_exe}"
+fi
+if [[ -f "${bridge_runtime_real_smoke_log}" ]]; then
+  echo "wrote ${bridge_runtime_real_smoke_log}"
 fi
 echo "wrote ${summary}"
 
@@ -886,6 +1103,30 @@ if [[ -n "${bridge_runtime_smoke_run_status}" &&
       "${bridge_runtime_smoke_run_status}" -ne 0 ]]; then
   echo "GridKit semantic bridge runtime glue smoke run failed; see ${bridge_runtime_smoke_log}" >&2
   exit "${bridge_runtime_smoke_run_status}"
+fi
+
+if [[ -n "${bridge_generated_derivative_compile_status}" &&
+      "${bridge_generated_derivative_compile_status}" -ne 0 ]]; then
+  echo "GridKit generated IDA JVP derivative compile failed; see ${bridge_generated_derivative_compile_log}" >&2
+  exit "${bridge_generated_derivative_compile_status}"
+fi
+
+if [[ -n "${bridge_generated_derivative_rename_status}" &&
+      "${bridge_generated_derivative_rename_status}" -ne 0 ]]; then
+  echo "GridKit generated IDA JVP derivative symbol rename failed; see ${bridge_generated_derivative_rename_log}" >&2
+  exit "${bridge_generated_derivative_rename_status}"
+fi
+
+if [[ -n "${bridge_runtime_real_smoke_compile_status}" &&
+      "${bridge_runtime_real_smoke_compile_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge real JVP smoke compile failed; see ${bridge_runtime_real_smoke_log}" >&2
+  exit "${bridge_runtime_real_smoke_compile_status}"
+fi
+
+if [[ -n "${bridge_runtime_real_smoke_run_status}" &&
+      "${bridge_runtime_real_smoke_run_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge real JVP smoke run failed; see ${bridge_runtime_real_smoke_log}" >&2
+  exit "${bridge_runtime_real_smoke_run_status}"
 fi
 
 if [[ -n "${default_status}" && "${default_status}" -ne 0 ]]; then
