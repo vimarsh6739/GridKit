@@ -358,6 +358,21 @@ int main()
     return 1;
   }
 
+  auto* generated_linear_solver =
+      static_cast<SmokeLinearSolver*>(ida_mem.linear_solver);
+  if (!check(generated_linear_solver->template_vector == &yy,
+             "generated linear solver used wrong template vector") ||
+      !check(generated_linear_solver->pretype == 0,
+             "generated linear solver used unexpected preconditioner type") ||
+      !check(generated_linear_solver->maxl == yy.length,
+             "generated linear solver did not use template vector length") ||
+      !check(generated_linear_solver->sunctx == &sunctx_token,
+             "generated linear solver used wrong SUNContext"))
+  {
+    teardownGeneratedIdaJvp(&ida_mem);
+    return 1;
+  }
+
   double      yp_storage[3]   = {4.0, 5.0, 6.0};
   double      rr_storage[3]   = {0.0, 0.0, 0.0};
   double      v_storage[3]    = {2.0, 4.0, 8.0};
