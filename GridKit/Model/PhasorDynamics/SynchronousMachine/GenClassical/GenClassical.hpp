@@ -78,6 +78,20 @@ namespace GridKit
       int tagDifferentiable() override final;
       int setAbsoluteTolerance(RealT) override;
       int evaluateResidual() override final;
+      void* generatedJvpInput(std::int64_t input_index) override final
+      {
+        if (input_index == 3)
+        {
+          if (wb_.size() < 2)
+          {
+            return nullptr;
+          }
+          wb_[0] = Vr();
+          wb_[1] = Vi();
+          return wb_.data();
+        }
+        return Component<ScalarT, IdxT>::generatedJvpInput(input_index);
+      }
 
       int verify() const override final
       {

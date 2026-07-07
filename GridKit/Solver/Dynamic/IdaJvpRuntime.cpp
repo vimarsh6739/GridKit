@@ -68,6 +68,89 @@ namespace AnalysisManager
           return registry;
         }
 
+        std::mutex& inputResolverRegistryMutex()
+        {
+          static std::mutex registry_mutex;
+          return registry_mutex;
+        }
+
+        std::unordered_map<const void*, IdaGeneratedJvpInputResolverFn>& inputResolverRegistry()
+        {
+          static std::unordered_map<const void*, IdaGeneratedJvpInputResolverFn> registry;
+          return registry;
+        }
+
+        class ScopedGeneratedIdaJvpInputResolver
+        {
+        public:
+          ScopedGeneratedIdaJvpInputResolver(void* model,
+                                             IdaGeneratedJvpInputResolverFn resolver)
+            : model_(model)
+          {
+            if (model_ == nullptr || resolver == nullptr)
+            {
+              return;
+            }
+
+            std::lock_guard<std::mutex> lock(inputResolverRegistryMutex());
+            auto&                       registry = inputResolverRegistry();
+            auto                        found    = registry.find(model_);
+            if (found != registry.end())
+            {
+              had_previous_ = true;
+              previous_     = found->second;
+            }
+            registry[model_] = resolver;
+            active_          = true;
+          }
+
+          ~ScopedGeneratedIdaJvpInputResolver()
+          {
+            if (!active_)
+            {
+              return;
+            }
+
+            std::lock_guard<std::mutex> lock(inputResolverRegistryMutex());
+            auto&                       registry = inputResolverRegistry();
+            if (had_previous_)
+            {
+              registry[model_] = previous_;
+            }
+            else
+            {
+              registry.erase(model_);
+            }
+          }
+
+          ScopedGeneratedIdaJvpInputResolver(
+            const ScopedGeneratedIdaJvpInputResolver&) = delete;
+          ScopedGeneratedIdaJvpInputResolver& operator=(
+            const ScopedGeneratedIdaJvpInputResolver&) = delete;
+
+        private:
+          const void*                      model_{};
+          IdaGeneratedJvpInputResolverFn   previous_{};
+          bool                             had_previous_{false};
+          bool                             active_{false};
+        };
+
+        void* resolveRegisteredGeneratedIdaJvpInput(void* model,
+                                                    std::int64_t input_index)
+        {
+          IdaGeneratedJvpInputResolverFn resolver = nullptr;
+          {
+            std::lock_guard<std::mutex> lock(inputResolverRegistryMutex());
+            auto                        found = inputResolverRegistry().find(model);
+            if (found != inputResolverRegistry().end())
+            {
+              resolver = found->second;
+            }
+          }
+
+          return resolver == nullptr ? nullptr : resolver(model, input_index);
+        }
+
         void destroyGeneratedIdaLinearSolver(void* linear_solver)
         {
           if (linear_solver == nullptr)
@@ -274,11 +357,25 @@ namespace AnalysisManager
         return inputs;
       }
 
+      std::vector<void*> collectGeneratedIdaJvpInputs(
+        void* model,
+        IdaGeneratedJvpInputResolverFn input_resolver)
+      {
+        ScopedGeneratedIdaJvpInputResolver resolver_scope(model, input_resolver);
+        return collectGeneratedIdaJvpInputs(model);
+      }
+
       void* resolveGeneratedIdaJvpInput(void* model, std::int64_t input_index)
       {
         if (input_index == 0)
         {
           return model;
+        }
+
+        if (void* resolved =
+              resolveRegisteredGeneratedIdaJvpInput(model, input_index))
+        {
+          return resolved;
         }
 
 #if defined(__GNUC__) || defined(__clang__)

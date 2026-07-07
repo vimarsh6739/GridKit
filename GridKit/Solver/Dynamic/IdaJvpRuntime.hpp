@@ -41,6 +41,7 @@ namespace AnalysisManager
       using IdaGeneratedJvpInputProviderFn = std::int64_t (*)(void*,
                                                               void**,
                                                               std::int64_t);
+      using IdaGeneratedJvpInputResolverFn = void* (*)(void*, std::int64_t);
 
       struct IdaGeneratedJvpHostHooks
       {
@@ -60,6 +61,9 @@ namespace AnalysisManager
       IdaGeneratedJvpHostHooks generatedIdaJvpHostHooks();
       bool hasGeneratedIdaJvpHostSplice();
       std::vector<void*> collectGeneratedIdaJvpInputs(void* model);
+      std::vector<void*> collectGeneratedIdaJvpInputs(
+        void* model,
+        IdaGeneratedJvpInputResolverFn input_resolver);
       void* resolveGeneratedIdaJvpInput(void* model, std::int64_t input_index);
       int configureGeneratedIdaJvp(void* ida_mem,
                                    void* yy_template,

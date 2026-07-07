@@ -176,6 +176,23 @@ namespace GridKit
         alpha_ = a;
       }
 
+      void* generatedJvpInput(std::int64_t input_index) override
+      {
+        switch (input_index)
+        {
+        case 0:
+          return this;
+        case 1:
+          return y_.empty() ? nullptr : y_.data();
+        case 2:
+          return yp_.empty() ? nullptr : yp_.data();
+        case 3:
+          return wb_.empty() ? nullptr : wb_.data();
+        default:
+          return nullptr;
+        }
+      }
+
       /**
        * @brief Set system frequency and power bases.
        *

@@ -40,6 +40,35 @@ namespace
 
   GeneratedIdaHookTestState generated_ida_hook_test_state;
 
+  class GeneratedInputEvaluator : public GridKit::Model::NullEvaluator<double, size_t>
+  {
+  public:
+    explicit GeneratedInputEvaluator(void* work_buffer)
+      : work_buffer_(work_buffer)
+    {
+    }
+
+    void* generatedJvpInput(std::int64_t input_index) override
+    {
+      if (input_index == 3)
+      {
+        return work_buffer_;
+      }
+      return GridKit::Model::NullEvaluator<double, size_t>::generatedJvpInput(input_index);
+    }
+
+  private:
+    void* work_buffer_{};
+  };
+
+  void* resolveGeneratedJvpInputForTestModel(void* model,
+                                             std::int64_t input_index)
+  {
+    auto* typed_model =
+      static_cast<GridKit::Model::Evaluator<double, size_t>*>(model);
+    return typed_model->generatedJvpInput(input_index);
+  }
+
   GridKit::Testing::TestOutcome compilerGeneratedIdaHostSplice()
   {
     using AnalysisManager::Sundials::Ida;
@@ -48,8 +77,8 @@ namespace
 
     GridKit::Testing::TestStatus success = true;
 
-    GridKit::Model::NullEvaluator<double, size_t> model;
-    double                                        work_buffer = 0.0;
+    double                  work_buffer = 0.0;
+    GeneratedInputEvaluator model(&work_buffer);
 
     generated_ida_hook_test_state.reset();
     generated_ida_hook_test_state.enabled        = true;
@@ -57,16 +86,14 @@ namespace
     generated_ida_hook_test_state.work_buffer    = &work_buffer;
 
     success *= hasGeneratedIdaJvpHostSplice();
-    std::vector<void*> inputs = collectGeneratedIdaJvpInputs(&model);
+    std::vector<void*> inputs =
+      collectGeneratedIdaJvpInputs(&model, &resolveGeneratedJvpInputForTestModel);
     success *= (inputs.size() == 4);
     success *= (inputs[0] == &model);
     success *= (inputs[3] == &work_buffer);
     success *= (AnalysisManager::Sundials::Runtime::resolveGeneratedIdaJvpInput(
                   &model,
                   0) == &model);
-    success *= (AnalysisManager::Sundials::Runtime::resolveGeneratedIdaJvpInput(
-                  &model,
-                  3) == &work_buffer);
 
     {
       Ida<double, size_t> ida(&model);
@@ -148,23 +175,16 @@ extern "C" std::int64_t __enzymexla_sundials_ida_fill_generated_jvp_inputs(void*
     return -1;
   }
 
-  inputs[0] = model;
-  inputs[1] = nullptr;
-  inputs[2] = nullptr;
-  inputs[3] = state.work_buffer;
-  return input_count;
-}
-
-extern "C" void* __enzymexla_sundials_ida_resolve_generated_jvp_input_from_host(void* model,
-                                                                                  std::int64_t input_index)
-{
-  auto& state = generated_ida_hook_test_state;
-  if (!state.enabled || model != state.expected_model || input_index != 3)
+  inputs[0]        = model;
+  inputs[1]        = nullptr;
+  inputs[2]        = nullptr;
+  void* work_input = __enzymexla_sundials_ida_resolve_generated_jvp_input(model, 3);
+  if (work_input == nullptr)
   {
-    return nullptr;
+    return -1;
   }
-
-  return state.work_buffer;
+  inputs[3] = work_input;
+  return input_count;
 }
 
 int main()

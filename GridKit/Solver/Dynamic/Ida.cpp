@@ -16,6 +16,17 @@ namespace AnalysisManager
 
   namespace Sundials
   {
+    namespace
+    {
+      template <class ScalarT, typename IdxT>
+      void* resolveGeneratedJvpInputFromModel(void* model,
+                                              std::int64_t input_index)
+      {
+        auto* typed_model =
+          static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(model);
+        return typed_model->generatedJvpInput(input_index);
+      }
+    } // namespace
 
     template <class ScalarT, typename IdxT>
     Ida<ScalarT, IdxT>::Ida(GridKit::Model::Evaluator<ScalarT, IdxT>* model)
@@ -151,7 +162,9 @@ namespace AnalysisManager
       }
 
       std::vector<void*> inputs =
-        Runtime::collectGeneratedIdaJvpInputs(model_);
+        Runtime::collectGeneratedIdaJvpInputs(
+          model_,
+          &resolveGeneratedJvpInputFromModel<ScalarT, IdxT>);
       if (inputs.empty())
       {
         return std::nullopt;

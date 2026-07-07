@@ -87,6 +87,15 @@ namespace GridKit
       bus.initialize();
       gen.initialize();
 
+      success *= (gen.generatedJvpInput(0) == &gen);
+      success *= (gen.generatedJvpInput(1) == static_cast<void*>(gen.y().data()));
+      success *= (gen.generatedJvpInput(2) == static_cast<void*>(gen.yp().data()));
+      auto* generated_wb =
+        static_cast<ScalarT*>(gen.generatedJvpInput(3));
+      success *= (generated_wb != nullptr);
+      success *= isEqual(generated_wb[0], bus.y()[0]);
+      success *= isEqual(generated_wb[1], bus.y()[1]);
+
       constexpr ScalarT cj  = 1.75;
       constexpr ScalarT eps = 1.0e-6;
       constexpr ScalarT tol = 2.0e-6;

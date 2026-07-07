@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include <GridKit/Constants.hpp>
@@ -118,6 +119,11 @@ namespace GridKit
       virtual IdxT sizeQuadrature()             = 0;
       virtual IdxT sizeParams()                 = 0;
       virtual void updateTime(RealT t, RealT a) = 0;
+
+      virtual void* generatedJvpInput(std::int64_t input_index)
+      {
+        return input_index == 0 ? this : nullptr;
+      }
 
       /**
        * @brief Get the absolute tolerance for each variable in the model

@@ -460,14 +460,23 @@ legacy KLU/dense branch. If the generated provider is absent or cannot resolve
 the required non-model inputs, GridKit keeps using the legacy path. If the
 provider succeeds, GridKit calls the generated setup dispatcher, which owns the
 generated JVP context and iterative linear solver under the IDA memory handle,
-and calls the generated teardown dispatcher during simulation cleanup. The
-remaining executable gap is the model-specific host resolver for required
-non-model inputs such as GenClassical's bus/work-buffer pointer. The setup
+and calls the generated teardown dispatcher during simulation cleanup. GridKit
+also now provides a model-side generated-input resolver path:
+`Model::Evaluator::generatedJvpInput(index)` defaults to model slot `0`,
+phasor `Component` exposes the existing `y`, `yp`, and `wb` buffers at residual
+argument indices `1`, `2`, and `3`, and `GenClassical` refreshes its bus-voltage
+work buffer before returning index `3`. `Ida<ScalarT, IdxT>` registers a scoped
+typed resolver while it invokes the generated input provider, and the stable C
+ABI resolver `__enzymexla_sundials_ida_resolve_generated_jvp_input` consults
+that resolver before falling back to the optional weak host extension. The setup
 helper underneath the dispatcher now derives the output size from the IDA `yy`
 template via `N_VGetLength`, so host splicing no longer has to supply that
-operand. If those preconditions fail, the fallback raw kernel is still marked
-`semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
-provenance-matching raw kernels are rejected rather
+operand. The remaining executable gaps are linking the generated runtime-glue
+object into a GridKit IDA executable, replacing the script-injected semantic
+bridge with in-compiler recovery across the actual source boundary, and running
+the complete generated-JVP IDA simulation. If those preconditions fail, the
+fallback raw kernel is still marked `semantic_raw_kernel_requires_lowering` and
+returns a nonzero status. Multiple provenance-matching raw kernels are rejected rather
 than chosen arbitrarily.
 
 `--recover-sundials-ida-llvm` is the first generic host-side solver recovery
@@ -802,9 +811,8 @@ repeatable artifact path and records the default-pipeline crash separately.
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
    the synthesized Jacobian action records, or raise both source regions in one
    artifact so no overlay is needed.
-2. Add or generate the host resolver that maps required non-model residual
-   input indices, such as GenClassical's bus/work-buffer slot, from the model
-   object used by GridKit's IDA path.
+2. Replace the export-only runtime-glue artifact with a generated object that
+   is linked into a GridKit IDA executable for the selected source region.
 3. Run a full GridKit IDA simulation through the generated JVP path without
    requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
 4. Either narrow the Reactant default pipeline around this source region or fix
