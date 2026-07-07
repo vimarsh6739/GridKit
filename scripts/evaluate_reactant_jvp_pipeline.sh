@@ -180,6 +180,7 @@ test_ida_build_exit="$(extract_json_scalar "${baseline_summary}" "test_ida_build
 test_ida_exit="$(extract_json_scalar "${baseline_summary}" "test_ida_exit_code")"
 three_bus_build_exit="$(extract_json_scalar "${baseline_summary}" "three_bus_classical_build_exit_code")"
 three_bus_exit="$(extract_json_scalar "${baseline_summary}" "three_bus_classical_exit_code")"
+three_bus_metrics_exit="$(extract_json_scalar "${baseline_summary}" "three_bus_classical_metrics_exit_code")"
 
 baseline_status="missing"
 if [[ -f "${baseline_summary}" ]]; then
@@ -195,11 +196,105 @@ test_ida_case_time="$(extract_ctest_case_time "${baseline_test_ida_log}")"
 test_ida_total_time="$(extract_ctest_total_time "${baseline_test_ida_log}")"
 three_bus_case_time="$(extract_ctest_case_time "${baseline_three_bus_log}")"
 three_bus_total_time="$(extract_ctest_total_time "${baseline_three_bus_log}")"
+baseline_three_bus_metrics_log="$(extract_json_string "${baseline_summary}" "three_bus_classical_metrics_log")"
+if [[ -z "${baseline_three_bus_metrics_log}" || ! -f "${baseline_three_bus_metrics_log}" ]]; then
+  baseline_three_bus_metrics_log="${gridkit_root}/build/gridkit-sundials-local/three_bus_classical_metrics.log"
+fi
 
 component_jvp_line="$(extract_last_matching_line "${component_jvp_log}" '^generated real JVP smoke:')"
 component_sundials_line="$(extract_last_matching_line "${component_sundials_log}" '^generated real SUNDIALS component smoke:')"
 systemmodel_jvp_line="$(extract_last_matching_line "${systemmodel_jvp_log}" '^systemmodel generated JVP smoke:')"
 systemmodel_sundials_line="$(extract_last_matching_line "${systemmodel_sundials_log}" '^generated SystemModel SUNDIALS smoke:')"
+baseline_three_bus_metrics_line="$(extract_json_string "${baseline_summary}" "line")"
+if [[ "${baseline_three_bus_metrics_line}" != legacy\ KLU\ SUNDIALS\ stats:* ]]; then
+  baseline_three_bus_metrics_line="$(
+    extract_last_matching_line "${baseline_three_bus_metrics_log}" '^legacy KLU SUNDIALS stats:'
+  )"
+fi
+baseline_solver_counters_available="false"
+if [[ "${baseline_three_bus_metrics_line}" == legacy\ KLU\ SUNDIALS\ stats:* ]]; then
+  baseline_solver_counters_available="true"
+fi
+baseline_jacobian_path="$(extract_json_string "${baseline_summary}" "jacobian_path")"
+if [[ -z "${baseline_jacobian_path}" ]]; then
+  baseline_jacobian_path="unknown"
+fi
+baseline_matches_requested_sparse_enzyme="false"
+baseline_solver_label="SUNDIALS IDA with KLU"
+case "${baseline_jacobian_path}" in
+  enzyme_sparse)
+    baseline_matches_requested_sparse_enzyme="true"
+    baseline_solver_label="SUNDIALS IDA with Enzyme sparse Jacobian and KLU"
+    ;;
+  dense_fallback_no_enzyme)
+    baseline_solver_label="SUNDIALS IDA with KLU and dense Jacobian fallback because GridKit was built without Enzyme"
+    ;;
+  dense_fallback_missing_component_jacobians)
+    baseline_solver_label="SUNDIALS IDA with KLU and dense Jacobian fallback because some components lacked Enzyme Jacobians"
+    ;;
+esac
+
+baseline_steps="$(extract_json_scalar "${baseline_summary}" "steps")"
+baseline_residual_evals="$(extract_json_scalar "${baseline_summary}" "residual_evals")"
+baseline_nonlinear_iters="$(extract_json_scalar "${baseline_summary}" "nonlinear_iters")"
+baseline_nonlinear_convergence_fails="$(extract_json_scalar "${baseline_summary}" "nonlinear_convergence_fails")"
+baseline_linear_decompositions="$(extract_json_scalar "${baseline_summary}" "linear_decompositions")"
+baseline_error_test_fails="$(extract_json_scalar "${baseline_summary}" "error_test_fails")"
+baseline_linear_iters="$(extract_json_scalar "${baseline_summary}" "linear_iters")"
+baseline_linear_conv_fails="$(extract_json_scalar "${baseline_summary}" "linear_conv_fails")"
+baseline_explicit_jacobian_evals="$(extract_json_scalar "${baseline_summary}" "explicit_jacobian_evals")"
+baseline_jac_times_setup_evals="$(extract_json_scalar "${baseline_summary}" "jac_times_setup_evals")"
+baseline_jac_times_evals="$(extract_json_scalar "${baseline_summary}" "jac_times_evals")"
+baseline_linear_residual_evals="$(extract_json_scalar "${baseline_summary}" "linear_residual_evals")"
+baseline_preconditioner_evals="$(extract_json_scalar "${baseline_summary}" "preconditioner_evals")"
+baseline_preconditioner_solves="$(extract_json_scalar "${baseline_summary}" "preconditioner_solves")"
+baseline_generated_jvp_configured="$(extract_json_scalar "${baseline_summary}" "generated_jvp_configured")"
+
+if [[ -z "${baseline_steps}" || "${baseline_steps}" == "null" ]]; then
+  baseline_steps="$(extract_line_metric "${baseline_three_bus_metrics_line}" "steps")"
+fi
+if [[ -z "${baseline_residual_evals}" || "${baseline_residual_evals}" == "null" ]]; then
+  baseline_residual_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "residual_evals")"
+fi
+if [[ -z "${baseline_nonlinear_iters}" || "${baseline_nonlinear_iters}" == "null" ]]; then
+  baseline_nonlinear_iters="$(extract_line_metric "${baseline_three_bus_metrics_line}" "nonlinear_iters")"
+fi
+if [[ -z "${baseline_nonlinear_convergence_fails}" || "${baseline_nonlinear_convergence_fails}" == "null" ]]; then
+  baseline_nonlinear_convergence_fails="$(extract_line_metric "${baseline_three_bus_metrics_line}" "nonlinear_convergence_fails")"
+fi
+if [[ -z "${baseline_linear_decompositions}" || "${baseline_linear_decompositions}" == "null" ]]; then
+  baseline_linear_decompositions="$(extract_line_metric "${baseline_three_bus_metrics_line}" "linear_decompositions")"
+fi
+if [[ -z "${baseline_error_test_fails}" || "${baseline_error_test_fails}" == "null" ]]; then
+  baseline_error_test_fails="$(extract_line_metric "${baseline_three_bus_metrics_line}" "error_test_fails")"
+fi
+if [[ -z "${baseline_linear_iters}" || "${baseline_linear_iters}" == "null" ]]; then
+  baseline_linear_iters="$(extract_line_metric "${baseline_three_bus_metrics_line}" "linear_iters")"
+fi
+if [[ -z "${baseline_linear_conv_fails}" || "${baseline_linear_conv_fails}" == "null" ]]; then
+  baseline_linear_conv_fails="$(extract_line_metric "${baseline_three_bus_metrics_line}" "linear_conv_fails")"
+fi
+if [[ -z "${baseline_explicit_jacobian_evals}" || "${baseline_explicit_jacobian_evals}" == "null" ]]; then
+  baseline_explicit_jacobian_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "explicit_jacobian_evals")"
+fi
+if [[ -z "${baseline_jac_times_setup_evals}" || "${baseline_jac_times_setup_evals}" == "null" ]]; then
+  baseline_jac_times_setup_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "jac_times_setup_evals")"
+fi
+if [[ -z "${baseline_jac_times_evals}" || "${baseline_jac_times_evals}" == "null" ]]; then
+  baseline_jac_times_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "jac_times_evals")"
+fi
+if [[ -z "${baseline_linear_residual_evals}" || "${baseline_linear_residual_evals}" == "null" ]]; then
+  baseline_linear_residual_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "linear_residual_evals")"
+fi
+if [[ -z "${baseline_preconditioner_evals}" || "${baseline_preconditioner_evals}" == "null" ]]; then
+  baseline_preconditioner_evals="$(extract_line_metric "${baseline_three_bus_metrics_line}" "preconditioner_evals")"
+fi
+if [[ -z "${baseline_preconditioner_solves}" || "${baseline_preconditioner_solves}" == "null" ]]; then
+  baseline_preconditioner_solves="$(extract_line_metric "${baseline_three_bus_metrics_line}" "preconditioner_solves")"
+fi
+if [[ -z "${baseline_generated_jvp_configured}" || "${baseline_generated_jvp_configured}" == "null" ]]; then
+  baseline_generated_jvp_configured="$(extract_line_metric "${baseline_three_bus_metrics_line}" "generated_jvp_configured")"
+fi
 
 component_steps="$(extract_line_metric "${component_sundials_line}" "steps")"
 component_residual_evals="$(extract_line_metric "${component_sundials_line}" "residual_evals")"
@@ -297,12 +392,14 @@ mkdir -p "$(dirname "${report}")"
   printf '  },\n'
   printf '  "qualification": {\n'
   printf '    "direct_speedup_claim": false,\n'
-  printf '    "solver_change": %s,\n' "$(json_string "A uses explicit sparse Jacobian plus KLU direct solves; C uses compiler-generated JacTimes plus SPGMR iterative solves.")"
+  printf '    "solver_change": %s,\n' "$(json_string "A uses ${baseline_solver_label}; C uses compiler-generated JacTimes plus SPGMR iterative solves.")"
   printf '    "interpretation": %s\n' "$(json_string "This report proves semantic behavior, generated callback registration, available solver counters, and numerical agreement. It does not present the direct-versus-iterative solver difference as a pure compiler speedup.")"
   printf '  },\n'
   printf '  "A_explicit_sparse_jacobian_klu": {\n'
   printf '    "status": %s,\n' "$(json_string "${baseline_status}")"
-  printf '    "solver": %s,\n' "$(json_string "SUNDIALS IDA with sparse SUNMatrix and KLU")"
+  printf '    "solver": %s,\n' "$(json_string "${baseline_solver_label}")"
+  printf '    "jacobian_path": %s,\n' "$(json_string "${baseline_jacobian_path}")"
+  printf '    "matches_requested_sparse_enzyme_baseline": %s,\n' "$(json_bool "${baseline_matches_requested_sparse_enzyme}")"
   printf '    "summary_exit_codes": {\n'
   printf '      "sundials_configure": %s,\n' "$(json_scalar_or_null "${sundials_config_exit}")"
   printf '      "sundials_build_install": %s,\n' "$(json_scalar_or_null "${sundials_build_exit}")"
@@ -310,7 +407,8 @@ mkdir -p "$(dirname "${report}")"
   printf '      "test_ida_build": %s,\n' "$(json_scalar_or_null "${test_ida_build_exit}")"
   printf '      "test_ida": %s,\n' "$(json_scalar_or_null "${test_ida_exit}")"
   printf '      "three_bus_classical_build": %s,\n' "$(json_scalar_or_null "${three_bus_build_exit}")"
-  printf '      "three_bus_classical": %s\n' "$(json_scalar_or_null "${three_bus_exit}")"
+  printf '      "three_bus_classical": %s,\n' "$(json_scalar_or_null "${three_bus_exit}")"
+  printf '      "three_bus_classical_metrics": %s\n' "$(json_scalar_or_null "${three_bus_metrics_exit}")"
   printf '    },\n'
   printf '    "ctest": {\n'
   printf '      "IDATest": {\n'
@@ -324,12 +422,27 @@ mkdir -p "$(dirname "${report}")"
   printf '        "log": %s\n' "$(json_string "${baseline_three_bus_log}")"
   printf '      }\n'
   printf '    },\n'
-  printf '    "solver_counters_available": false,\n'
+  printf '    "solver_counters_available": %s,\n' "$(json_bool "${baseline_solver_counters_available}")"
+  printf '    "solver_counters": {\n'
+  printf '      "line": %s,\n' "$(json_string_or_null "${baseline_three_bus_metrics_line}")"
+  printf '      "log": %s,\n' "$(json_string "${baseline_three_bus_metrics_log}")"
+  printf '      "steps": %s,\n' "$(json_number_or_null "${baseline_steps}")"
+  printf '      "residual_evals": %s,\n' "$(json_number_or_null "${baseline_residual_evals}")"
+  printf '      "nonlinear_iters": %s,\n' "$(json_number_or_null "${baseline_nonlinear_iters}")"
+  printf '      "nonlinear_convergence_fails": %s,\n' "$(json_number_or_null "${baseline_nonlinear_convergence_fails}")"
+  printf '      "linear_decompositions": %s,\n' "$(json_number_or_null "${baseline_linear_decompositions}")"
+  printf '      "error_test_fails": %s,\n' "$(json_number_or_null "${baseline_error_test_fails}")"
+  printf '      "linear_iters": %s,\n' "$(json_number_or_null "${baseline_linear_iters}")"
+  printf '      "linear_conv_fails": %s,\n' "$(json_number_or_null "${baseline_linear_conv_fails}")"
+  printf '      "explicit_jacobian_evals": %s,\n' "$(json_number_or_null "${baseline_explicit_jacobian_evals}")"
+  printf '      "jac_times_setup_evals": %s,\n' "$(json_number_or_null "${baseline_jac_times_setup_evals}")"
+  printf '      "jac_times_evals": %s,\n' "$(json_number_or_null "${baseline_jac_times_evals}")"
+  printf '      "linear_residual_evals": %s,\n' "$(json_number_or_null "${baseline_linear_residual_evals}")"
+  printf '      "preconditioner_evals": %s,\n' "$(json_number_or_null "${baseline_preconditioner_evals}")"
+  printf '      "preconditioner_solves": %s,\n' "$(json_number_or_null "${baseline_preconditioner_solves}")"
+  printf '      "generated_jvp_configured": %s\n' "$(json_number_or_null "${baseline_generated_jvp_configured}")"
+  printf '    },\n'
   printf '    "missing_counters": [\n'
-  printf '      "nonlinear_iterations",\n'
-  printf '      "linear_iterations",\n'
-  printf '      "residual_evaluations",\n'
-  printf '      "jacobian_evaluations",\n'
   printf '      "derivative_time",\n'
   printf '      "sparse_assembly_time",\n'
   printf '      "memory"\n'
@@ -419,20 +532,22 @@ mkdir -p "$(dirname "${report}")"
   printf '    }\n'
   printf '  },\n'
   printf '  "phase8_metric_coverage": {\n'
-  printf '    "total_runtime": %s,\n' "$(json_string "Available only as coarse ctest times for the legacy KLU baseline in this report; generated smokes are counter checks, not timed benchmarks.")"
+  printf '    "total_runtime": %s,\n' "$(json_string "Available as coarse ctest times for the legacy KLU baseline; generated smokes are counter and microbenchmark checks, not end-to-end timed benchmarks.")"
   printf '    "derivative_computation_time": %s,\n' "$(json_string "Partially available as standalone smoke microbenchmarks for generated JVP and explicit sparse J*v paths; not yet available inside the legacy KLU solver run.")"
   printf '    "sparse_assembly_time": %s,\n' "$(json_string "Partially available as explicit sparse J*v smoke timing, which includes sparse Jacobian materialization plus multiplication for the tiny smoke models.")"
   printf '    "jvp_time": %s,\n' "$(json_string "Available as standalone smoke microbenchmarks for the generated JacTimes/JVP path; solver-integrated callback wall time still needs instrumentation.")"
   printf '    "memory": %s,\n' "$(json_string "Unavailable; no peak-memory instrumentation is wired into the baseline or generated smokes yet.")"
-  printf '    "nonlinear_iterations": %s,\n' "$(json_string "Available for generated component and SystemModel smokes; unavailable for the current KLU baseline logs.")"
-  printf '    "linear_iterations": %s,\n' "$(json_string "Available for generated component and SystemModel smokes; unavailable for the current KLU baseline logs.")"
-  printf '    "residual_evaluations": %s,\n' "$(json_string "Available for generated component and SystemModel smokes; unavailable for the current KLU baseline logs.")"
-  printf '    "derivative_or_jvp_evaluations": %s,\n' "$(json_string "JacTimes evaluations are available for generated smokes and explicit Jacobian evaluations are reported as zero there; KLU Jacobian counts are unavailable in the current baseline logs.")"
+  printf '    "nonlinear_iterations": %s,\n' "$(json_string "Available for the legacy KLU ThreeBusClassical baseline and generated component/SystemModel smokes.")"
+  printf '    "linear_iterations": %s,\n' "$(json_string "Available for the legacy KLU ThreeBusClassical baseline and generated component/SystemModel smokes.")"
+  printf '    "residual_evaluations": %s,\n' "$(json_string "Available for the legacy KLU ThreeBusClassical baseline and generated component/SystemModel smokes.")"
+  printf '    "derivative_or_jvp_evaluations": %s,\n' "$(json_string "KLU explicit Jacobian evaluations are available for the legacy baseline; JacTimes evaluations are available for generated smokes and explicit Jacobian evaluations are reported as zero there.")"
   printf '    "convergence_behavior": %s,\n' "$(json_string "Available as successful completion plus step/iteration counters for generated smokes and pass/fail ctest status for baseline.")"
   printf '    "final_numerical_agreement": %s\n' "$(json_string "Available from finite-difference, explicit CSR/sparse, and MatrixFree oracle checks in generated JVP smokes.")"
   printf '  },\n'
   printf '  "materialization_savings_vs_solver_costs": {\n'
   printf '    "avoids_solver_time_explicit_jacobian_materialization": %s,\n' "$(json_bool "$([[ "${component_explicit_jacobian_evals}" == "0" && "${systemmodel_explicit_jacobian_evals}" == "0" ]] && printf true || printf false)")"
+  printf '    "baseline_explicit_jacobian_evals": %s,\n' "$(json_number_or_null "${baseline_explicit_jacobian_evals}")"
+  printf '    "baseline_jac_times_evals": %s,\n' "$(json_number_or_null "${baseline_jac_times_evals}")"
   printf '    "component_jac_times_evals": %s,\n' "$(json_number_or_null "${component_jac_times_evals}")"
   printf '    "systemmodel_jac_times_evals": %s,\n' "$(json_number_or_null "${systemmodel_jac_times_evals}")"
   printf '    "component_generated_jvp_avg_us": %s,\n' "$(json_number_or_null "${component_generated_jvp_avg_us}")"
@@ -446,6 +561,6 @@ mkdir -p "$(dirname "${report}")"
 } > "${report}"
 
 echo "wrote ${report}"
-echo "A explicit sparse + KLU: ${baseline_status}"
+echo "A legacy KLU baseline: ${baseline_status} (${baseline_jacobian_path})"
 echo "C compiler-generated JVP + iterative IDA: ${compiler_status}"
 echo "D MatrixFree oracle: ${oracle_status}"

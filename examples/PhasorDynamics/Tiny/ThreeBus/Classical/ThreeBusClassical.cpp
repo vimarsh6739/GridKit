@@ -260,6 +260,34 @@ int main()
             << " at time t = " << worst_error_time << "\n";
   std::cout << "\n\nComplete in " << (stop - start) / CLOCKS_PER_SEC << " seconds\n\n";
 
+  const auto ida_stats = ida.getStats();
+  const auto lin_stats = ida.getLinearSolverStats();
+  std::cout << "legacy KLU SUNDIALS stats:"
+            << " steps=" << ida_stats.num_steps_
+            << " residual_evals=" << ida_stats.num_residual_evals_
+            << " nonlinear_iters=" << ida_stats.num_nonlinear_iters_
+            << " nonlinear_convergence_fails="
+            << ida_stats.num_nonlinear_convergence_fails_
+            << " linear_decompositions="
+            << ida_stats.num_linear_decompositions_
+            << " error_test_fails=" << ida_stats.num_error_test_fails_
+            << " linear_iters=" << lin_stats.num_linear_iters_
+            << " linear_conv_fails=" << lin_stats.num_linear_conv_fails_
+            << " explicit_jacobian_evals="
+            << lin_stats.num_jacobian_evals_
+            << " jac_times_setup_evals="
+            << lin_stats.num_jac_times_setup_evals_
+            << " jac_times_evals=" << lin_stats.num_jac_times_evals_
+            << " linear_residual_evals="
+            << lin_stats.num_linear_residual_evals_
+            << " preconditioner_evals="
+            << lin_stats.num_preconditioner_evals_
+            << " preconditioner_solves="
+            << lin_stats.num_preconditioner_solves_
+            << " generated_jvp_configured="
+            << (ida.generatedJvpConfigured() ? 1 : 0)
+            << "\n";
+
   int success = 0;
   if (worst_error < error_allowed)
   {

@@ -939,10 +939,15 @@ GRIDKIT_EVALUATION_RUN_REACTANT_EXPORT=1 \
 The current report records:
 
 ```text
-A explicit sparse Jacobian + KLU: ok
+A legacy KLU baseline: ok
+  jacobian path: dense_fallback_no_enzyme
+  matches requested Enzyme sparse + KLU baseline: false
   IDATest ctest case time: 0.00 sec, total: 0.01 sec
   ThreeBusClassical ctest case time: 0.01 sec, total: 0.01 sec
-  detailed KLU solver counters: unavailable in current baseline logs
+  direct ThreeBusClassical KLU counters:
+    steps=1494 residual_evals=1781 nonlinear_iters=1779
+    linear_decompositions=32 explicit_jacobian_evals=32
+    jac_times_evals=0 generated_jvp_configured=0
 
 B raised before JVP optimization: not executable as a separate solver path
   semantic Jacobian materializations: 8
@@ -963,15 +968,26 @@ D hand-written MatrixFree JVP prototype: ok as an oracle only
   finite-difference, explicit CSR/sparse, and MatrixFree checks all pass
 ```
 
+By default `run_sundials_ida_baseline.sh` keeps Enzyme disabled to preserve the
+fast local baseline rebuild path. The script classifies that run as
+`dense_fallback_no_enzyme`; it is a KLU solver-counter baseline, not the final
+requested Enzyme sparse Jacobian + KLU A path. To attempt the requested sparse
+baseline, rerun with:
+
+```bash
+GRIDKIT_SUNDIALS_BASELINE_ENABLE_ENZYME=ON \
+ENZYME_DIR=GridKit/build/deps/enzyme-llvm23-build \
+  bash GridKit/scripts/run_sundials_ida_baseline.sh
+```
+
 The report explicitly sets `direct_speedup_claim = false`. The current evidence
 separates materialization avoidance from solver choice: the generated path
 proves automatic JacTimes registration, JVP activity, and zero solver-time
 explicit Jacobian evaluations, but it changes the linear solver from KLU direct
 to SPGMR iterative. Standalone smoke microbenchmarks now report generated JVP
 and explicit sparse `J*v` timings for the tiny component and SystemModel-layout
-cases. Solver-integrated callback wall time, memory, and KLU iteration/Jacobian
-counters still require additional instrumentation before they can be used for a
-performance claim.
+cases. Solver-integrated callback wall time and memory still require additional
+instrumentation before they can be used for a performance claim.
 
 ## Current Reactant Limitation
 
