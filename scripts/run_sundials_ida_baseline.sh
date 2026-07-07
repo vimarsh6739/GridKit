@@ -15,6 +15,8 @@ klu_include_dir="${KLU_INCLUDE_DIR:-/usr/include/suitesparse}"
 klu_library_dir="${KLU_LIBRARY_DIR:-/usr/lib/x86_64-linux-gnu}"
 gridkit_enable_enzyme="${GRIDKIT_SUNDIALS_BASELINE_ENABLE_ENZYME:-OFF}"
 enzyme_dir="${ENZYME_DIR:-${gridkit_root}/build/deps/enzyme-llvm23-build}"
+gridkit_c_compiler="${GRIDKIT_SUNDIALS_BASELINE_CC:-}"
+gridkit_cxx_compiler="${GRIDKIT_SUNDIALS_BASELINE_CXX:-}"
 
 case "${gridkit_enable_enzyme}" in
   1 | ON | on | TRUE | true | YES | yes)
@@ -25,12 +27,28 @@ case "${gridkit_enable_enzyme}" in
     ;;
 esac
 
+gridkit_compiler_args=()
+if [[ -n "${gridkit_c_compiler}" ]]; then
+  gridkit_compiler_args+=("-DCMAKE_C_COMPILER=${gridkit_c_compiler}")
+fi
+if [[ -n "${gridkit_cxx_compiler}" ]]; then
+  gridkit_compiler_args+=("-DCMAKE_CXX_COMPILER=${gridkit_cxx_compiler}")
+fi
+
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 json_string() {
   printf '"%s"' "$(json_escape "$1")"
+}
+
+json_string_or_null() {
+  if [[ -n "$1" ]]; then
+    json_string "$1"
+  else
+    printf 'null'
+  fi
 }
 
 json_number_or_null() {
@@ -118,6 +136,8 @@ if [[ "${sundials_config_status}" -eq 0 && "${sundials_build_status}" -eq 0 ]]; 
       -DSUNDIALS_DIR="${sundials_install}" \
       -DGridKit_ENABLE_ENZYME="${gridkit_enable_enzyme}" \
       -DENZYME_DIR="${enzyme_dir}" \
+      -DEnzyme_DIR="${enzyme_dir}" \
+      "${gridkit_compiler_args[@]}" \
       -DGridKit_ENABLE_IPOPT=OFF
 else
   gridkit_config_status=""
@@ -188,13 +208,16 @@ if [[ -f "${three_bus_metrics_log}" ]]; then
     grep -c "GridKit was built with Enzyme, but some models" "${three_bus_metrics_log}" || true
   )"
 fi
-three_bus_jacobian_path="enzyme_sparse"
-if [[ "${three_bus_dense_no_enzyme_warnings}" =~ ^[0-9]+$ &&
-      "${three_bus_dense_no_enzyme_warnings}" -gt 0 ]]; then
-  three_bus_jacobian_path="dense_fallback_no_enzyme"
-elif [[ "${three_bus_dense_missing_component_warnings}" =~ ^[0-9]+$ &&
-        "${three_bus_dense_missing_component_warnings}" -gt 0 ]]; then
-  three_bus_jacobian_path="dense_fallback_missing_component_jacobians"
+three_bus_jacobian_path="unknown"
+if [[ "${three_bus_stats_line}" == legacy\ KLU\ SUNDIALS\ stats:* ]]; then
+  three_bus_jacobian_path="enzyme_sparse"
+  if [[ "${three_bus_dense_no_enzyme_warnings}" =~ ^[0-9]+$ &&
+        "${three_bus_dense_no_enzyme_warnings}" -gt 0 ]]; then
+    three_bus_jacobian_path="dense_fallback_no_enzyme"
+  elif [[ "${three_bus_dense_missing_component_warnings}" =~ ^[0-9]+$ &&
+          "${three_bus_dense_missing_component_warnings}" -gt 0 ]]; then
+    three_bus_jacobian_path="dense_fallback_missing_component_jacobians"
+  fi
 fi
 
 json_status() {
@@ -226,6 +249,8 @@ mkdir -p "$(dirname "${summary}")"
   printf '    "build": %s,\n' "$(json_string "${gridkit_build}")"
   printf '    "enzyme_enabled": %s,\n' "$([[ "${gridkit_enable_enzyme}" == "ON" ]] && printf true || printf false)"
   printf '    "enzyme_dir": %s,\n' "$(json_string "${enzyme_dir}")"
+  printf '    "c_compiler": %s,\n' "$(json_string_or_null "${gridkit_c_compiler}")"
+  printf '    "cxx_compiler": %s,\n' "$(json_string_or_null "${gridkit_cxx_compiler}")"
   printf '    "configure_exit_code": %s,\n' "$(json_status "${gridkit_config_status}")"
   printf '    "test_ida_build_exit_code": %s,\n' "$(json_status "${test_ida_build_status}")"
   printf '    "test_ida_exit_code": %s,\n' "$(json_status "${test_ida_status}")"

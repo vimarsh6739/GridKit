@@ -972,13 +972,34 @@ By default `run_sundials_ida_baseline.sh` keeps Enzyme disabled to preserve the
 fast local baseline rebuild path. The script classifies that run as
 `dense_fallback_no_enzyme`; it is a KLU solver-counter baseline, not the final
 requested Enzyme sparse Jacobian + KLU A path. To attempt the requested sparse
-baseline, rerun with:
+baseline, use a complete Enzyme build tree and the matching LLVM compiler:
 
 ```bash
+GRIDKIT_SUNDIALS_BUILD=GridKit/build/gridkit-sundials-enzyme-clang-local \
+GRIDKIT_SUNDIALS_BASELINE_SUMMARY=GridKit/build/gridkit-sundials-enzyme-clang-local/gridkit_sundials_ida_baseline.json \
 GRIDKIT_SUNDIALS_BASELINE_ENABLE_ENZYME=ON \
-ENZYME_DIR=GridKit/build/deps/enzyme-llvm23-build \
+ENZYME_DIR=/mnt/vimarsh6739/hiord/Enzyme/enzyme/build \
+GRIDKIT_SUNDIALS_BASELINE_CC=/home/vimarsh6739/llvm-project/build/bin/clang \
+GRIDKIT_SUNDIALS_BASELINE_CXX=/home/vimarsh6739/llvm-project/build/bin/clang++ \
   bash GridKit/scripts/run_sundials_ida_baseline.sh
 ```
+
+Current sparse-baseline attempt status: CMake finds
+`/mnt/vimarsh6739/hiord/Enzyme/enzyme/build/Enzyme/LLVMEnzyme-23.so` and
+`ClangEnzyme-23.so`, and `IDATest` still builds/runs. Building
+`ThreeBusClassical` then fails while compiling the Enzyme sparse component
+objects because `ClangEnzyme-23.so` cannot be loaded by the local Clang 23:
+
+```text
+undefined symbol: _ZN4llvm8RegistryIN5clang14ParsedAttrInfoEJEE4TailE
+```
+
+The incomplete Enzyme tree at `GridKit/build/deps/enzyme-llvm23-build` is also
+not sufficient for this baseline: it has package files but no plugin shared
+objects, and attempting to build `LLVMEnzyme-23` there currently fails in
+`enzyme-tblgen` while regenerating `InstructionDerivatives.td` outputs. The
+remaining A-path blocker is therefore a compatible Enzyme/Clang plugin build,
+not KLU instrumentation.
 
 The report explicitly sets `direct_speedup_claim = false`. The current evidence
 separates materialization avoidance from solver choice: the generated path

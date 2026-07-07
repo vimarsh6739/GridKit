@@ -42,7 +42,7 @@ find_library(
         LD_LIBRARY_PATH
         ENV
         DYLD_LIBRARY_PATH
-  PATH_SUFFIXES lib64 lib REQUIRED)
+  PATH_SUFFIXES Enzyme lib64 lib REQUIRED)
 message(STATUS "Enzyme LLVM plugin library: ${ENZYME_LLVM_PLUGIN_LIBRARY}")
 if(TARGET LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR})
   set_target_properties(LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR}
@@ -60,7 +60,7 @@ if(GRIDKIT_ENZYME_USE_CLANG_PLUGIN)
           LD_LIBRARY_PATH
           ENV
           DYLD_LIBRARY_PATH
-    PATH_SUFFIXES lib64 lib REQUIRED)
+    PATH_SUFFIXES Enzyme lib64 lib REQUIRED)
   message(STATUS "Enzyme Clang plugin library: ${ENZYME_CLANG_PLUGIN_LIBRARY}")
   if(TARGET ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR})
     set_target_properties(ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR}
