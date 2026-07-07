@@ -91,9 +91,18 @@ bridge_runtime_real_sundials_component_log="${out_dir}/gridkit_semantic_bridge_r
 system_layout_derivative_src="${out_dir}/gridkit_systemmodel_layout_jvp_derivative.cpp"
 system_layout_derivative_object="${out_dir}/gridkit_systemmodel_layout_jvp_derivative.o"
 system_layout_derivative_compile_log="${out_dir}/gridkit_systemmodel_layout_jvp_derivative_compile.log"
-system_layout_runtime_src="${out_dir}/gridkit_systemmodel_layout_ida_runtime.cpp"
+system_layout_raw_kernel_src="${out_dir}/gridkit_systemmodel_layout_raw_jvp_kernel.cpp"
+system_layout_raw_kernel_object="${out_dir}/gridkit_systemmodel_layout_raw_jvp_kernel.o"
+system_layout_raw_kernel_compile_log="${out_dir}/gridkit_systemmodel_layout_raw_jvp_kernel_compile.log"
+system_layout_runtime_input_mlir="${out_dir}/gridkit_systemmodel_layout_ida_runtime_input.mlir"
+system_layout_runtime_mlir="${out_dir}/gridkit_systemmodel_layout_ida_runtime.mlir"
+system_layout_runtime_llvm_mlir="${out_dir}/gridkit_systemmodel_layout_ida_runtime_llvm_only.mlir"
+system_layout_runtime_llvm_ir="${out_dir}/gridkit_systemmodel_layout_ida_runtime.ll"
 system_layout_runtime_object="${out_dir}/gridkit_systemmodel_layout_ida_runtime.o"
-system_layout_runtime_compile_log="${out_dir}/gridkit_systemmodel_layout_ida_runtime_compile.log"
+system_layout_runtime_log="${out_dir}/gridkit_systemmodel_layout_ida_runtime.log"
+system_layout_runtime_strip_log="${out_dir}/gridkit_systemmodel_layout_ida_runtime_strip.log"
+system_layout_runtime_translate_log="${out_dir}/gridkit_systemmodel_layout_ida_runtime_translate.log"
+system_layout_runtime_compile_log="${out_dir}/gridkit_systemmodel_layout_ida_runtime_object.log"
 system_layout_smoke_exe="${out_dir}/gridkit_systemmodel_layout_jvp_smoke"
 system_layout_smoke_log="${out_dir}/gridkit_systemmodel_layout_jvp_smoke.log"
 system_sundials_smoke_exe="${out_dir}/gridkit_systemmodel_layout_ida_sundials_smoke"
@@ -394,7 +403,14 @@ system_layout_smoke_compile_status=""
 system_layout_smoke_run_status=""
 system_layout_runtime_attempted="false"
 system_layout_runtime_skipped_reason=""
+system_layout_runtime_status=""
+system_layout_runtime_strip_status=""
+system_layout_runtime_translate_status=""
+system_layout_runtime_object_status=""
 system_layout_runtime_compile_status=""
+system_layout_raw_kernel_attempted="false"
+system_layout_raw_kernel_skipped_reason=""
+system_layout_raw_kernel_compile_status=""
 system_sundials_smoke_attempted="false"
 system_sundials_smoke_skipped_reason=""
 system_sundials_smoke_compile_status=""
@@ -1019,16 +1035,15 @@ SYSTEM_LAYOUT_DERIVATIVE_EOF
             ! -f "${sundials_install}/lib/libsundials_core.so" ]]; then
       system_layout_runtime_skipped_reason="required SUNDIALS shared libraries not found under GRIDKIT_REACTANT_SUNDIALS_INSTALL"
       system_sundials_smoke_skipped_reason="${system_layout_runtime_skipped_reason}"
+    elif [[ -z "${mlir_translate}" || ! -x "${mlir_translate}" ]]; then
+      system_layout_runtime_skipped_reason="mlir-translate not found; set MLIR_TRANSLATE"
+      system_sundials_smoke_skipped_reason="${system_layout_runtime_skipped_reason}"
+    elif [[ -z "${llc_tool}" || ! -x "${llc_tool}" ]]; then
+      system_layout_runtime_skipped_reason="llc not found; set LLC"
+      system_sundials_smoke_skipped_reason="${system_layout_runtime_skipped_reason}"
     else
-      cat > "${system_layout_runtime_src}" <<'SYSTEM_LAYOUT_RUNTIME_EOF'
+      cat > "${system_layout_raw_kernel_src}" <<'SYSTEM_LAYOUT_RAW_KERNEL_EOF'
 #include <cstdint>
-#include <limits>
-
-#include <idas/idas.h>
-#include <idas/idas_ls.h>
-#include <nvector/nvector_serial.h>
-#include <sundials/sundials_iterative.h>
-#include <sunlinsol/sunlinsol_spgmr.h>
 
 #include <GridKit/Model/PhasorDynamics/SystemModelImpl.hpp>
 #include <GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassicalImpl.hpp>
@@ -1043,162 +1058,116 @@ namespace
 
   GenT* firstGenClassical(SystemT* system)
   {
-    if (system == nullptr)
-    {
-      return nullptr;
-    }
-    return dynamic_cast<GenT*>(system->getComponent(0));
-  }
-
-  void cleanupSystemModelGeneratedJvp(void* ida_mem)
-  {
-    __enzymexla_sundials_ida_destroy_remembered_linear_solver(ida_mem);
-    __enzymexla_sundials_ida_destroy_remembered_jvp_context(ida_mem);
+    return system == nullptr ? nullptr
+                             : dynamic_cast<GenT*>(system->getComponent(0));
   }
 } // namespace
 
 extern "C" void gridkitGeneratedSystemModelLayoutJvp(
     GenT*, double*, double*, double*, double*, double*);
 
-extern "C" std::int64_t __enzymexla_sundials_ida_fill_generated_jvp_inputs(
-    void* model, void** inputs, std::int64_t capacity)
+extern "C" int gridkitGeneratedSystemModelLayoutRawJvp(
+    double /*tt*/, double* yy, double* yp, double* /*rr*/, double* v,
+    double* jv, double /*cj*/, void* user_data, double* yp_tangent,
+    double* /*tmp2*/)
 {
-  constexpr std::int64_t input_count = 1;
-  if (inputs == nullptr)
-  {
-    return input_count;
-  }
-  if (model == nullptr || capacity < input_count)
-  {
-    return -1;
-  }
-  inputs[0] = model;
-  return input_count;
-}
-
-extern "C" int __enzymexla_sundials_ida_jactimes_systemmodel_layout(
-    double tt, N_Vector yy, N_Vector yp, N_Vector rr, N_Vector v, N_Vector Jv,
-    double cj, void* user_data, N_Vector tmp1, N_Vector tmp2)
-{
-  (void)tt;
-  (void)rr;
-  (void)tmp2;
-
-  using AnalysisManager::Sundials::Runtime::IdaJvpUserData;
-  using AnalysisManager::Sundials::Runtime::isIdaJvpUserData;
-
-  if (!isIdaJvpUserData(user_data))
+  auto* system = static_cast<SystemT*>(
+      __enzymexla_sundials_ida_context_input(user_data, 0));
+  GenT* gen = firstGenClassical(system);
+  if (gen == nullptr || yy == nullptr || yp == nullptr || v == nullptr ||
+      jv == nullptr || yp_tangent == nullptr)
   {
     return 1;
   }
 
-  auto* context = static_cast<IdaJvpUserData*>(user_data);
-  auto* system  = static_cast<SystemT*>(context->model);
-  GenT* gen     = firstGenClassical(system);
-  if (gen == nullptr)
-  {
-    return 1;
-  }
-
-  N_VScale(cj, v, tmp1);
-
-  auto* y_values       = N_VGetArrayPointer(yy);
-  auto* yp_values      = N_VGetArrayPointer(yp);
-  auto* v_values       = N_VGetArrayPointer(v);
-  auto* yp_seed_values = N_VGetArrayPointer(tmp1);
-  auto* jv_values      = N_VGetArrayPointer(Jv);
-  if (y_values == nullptr || yp_values == nullptr || v_values == nullptr ||
-      yp_seed_values == nullptr || jv_values == nullptr)
-  {
-    return 1;
-  }
-
-  gridkitGeneratedSystemModelLayoutJvp(
-      gen, y_values, v_values, yp_values, yp_seed_values, jv_values);
+  gridkitGeneratedSystemModelLayoutJvp(gen, yy, v, yp, yp_tangent, jv);
   return 0;
 }
+SYSTEM_LAYOUT_RAW_KERNEL_EOF
 
-extern "C" int __enzymexla_sundials_ida_setup_generated_jactimes(
-    void* ida_mem, void* yy_template, void* sunctx, void* model, void** inputs,
-    std::int64_t input_count, void** context_out)
-{
-  if (ida_mem == nullptr || yy_template == nullptr || sunctx == nullptr ||
-      model == nullptr || context_out == nullptr || input_count <= 0)
-  {
-    return 1;
-  }
-
-  const auto output_size = N_VGetLength(static_cast<N_Vector>(yy_template));
-  void* context =
-      __enzymexla_sundials_ida_create_jvp_context(
-          model, inputs, input_count, output_size);
-  if (context == nullptr)
-  {
-    return 1;
-  }
-
-  __enzymexla_sundials_ida_register_jvp_context(context);
-  __enzymexla_sundials_ida_remember_jvp_context(ida_mem, context);
-  *context_out = context;
-
-  int status = IDASetUserData(ida_mem, context);
-  if (status != 0)
-  {
-    cleanupSystemModelGeneratedJvp(ida_mem);
-    return status;
-  }
-
-  const int maxl =
-      output_size > 0 && output_size <= std::numeric_limits<int>::max()
-          ? static_cast<int>(output_size)
-          : 0;
-  SUNLinearSolver linear_solver =
-      SUNLinSol_SPGMR(static_cast<N_Vector>(yy_template), SUN_PREC_NONE, maxl,
-                      static_cast<SUNContext>(sunctx));
-  if (linear_solver == nullptr)
-  {
-    cleanupSystemModelGeneratedJvp(ida_mem);
-    return 1;
-  }
-  __enzymexla_sundials_ida_remember_linear_solver(ida_mem, linear_solver);
-
-  status = IDASetLinearSolver(ida_mem, linear_solver, nullptr);
-  if (status != 0)
-  {
-    cleanupSystemModelGeneratedJvp(ida_mem);
-    return status;
-  }
-
-  status = IDASetJacTimes(
-      ida_mem, nullptr, __enzymexla_sundials_ida_jactimes_systemmodel_layout);
-  if (status != 0)
-  {
-    cleanupSystemModelGeneratedJvp(ida_mem);
-  }
-  return status;
-}
-
-extern "C" void __enzymexla_sundials_ida_teardown_generated_jactimes(
-    void* ida_mem)
-{
-  cleanupSystemModelGeneratedJvp(ida_mem);
-}
-SYSTEM_LAYOUT_RUNTIME_EOF
-
-      system_layout_runtime_attempted="true"
+      system_layout_raw_kernel_attempted="true"
       set +e
       "${runtime_smoke_cxx}" -std=c++20 -O0 -g -pthread -fPIC \
         -I"${sundials_gridkit_build}" \
         -I"${gridkit_root}" \
         -I"${gridkit_root}/third-party/magic-enum/include" \
         -I"${sundials_install}/include" \
-        -c "${system_layout_runtime_src}" \
-        -o "${system_layout_runtime_object}" \
-        > "${system_layout_runtime_compile_log}" 2>&1
-      system_layout_runtime_compile_status=$?
+        -c "${system_layout_raw_kernel_src}" \
+        -o "${system_layout_raw_kernel_object}" \
+        > "${system_layout_raw_kernel_compile_log}" 2>&1
+      system_layout_raw_kernel_compile_status=$?
       set -e
 
-      if [[ "${system_layout_runtime_compile_status}" -eq 0 ]]; then
+      cat > "${system_layout_runtime_input_mlir}" <<'SYSTEM_LAYOUT_RUNTIME_MLIR_EOF'
+module {
+  llvm.func @gridkitGeneratedSystemModelLayoutRawJvp(f64, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, f64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32 attributes {enzymexla.sundials.jacobian_action = @systemmodel_layout_effective_action, enzymexla.sundials.runtime_role = "lowered_raw_jvp_kernel"}
+
+  llvm.func @gridkitSystemModelLayoutResidual()
+  llvm.func @gridkitSystemModelLayoutMaterializedJacobian()
+
+  enzymexla.jacobian_action @systemmodel_layout_effective_action
+    materialization = @gridkitSystemModelLayoutMaterializedJacobian
+    residual = @gridkitSystemModelLayoutResidual
+    active_input_index = 1
+    active_output_index = 0
+    {enzymexla.sundials.lowered_raw_jvp_kernel = @gridkitGeneratedSystemModelLayoutRawJvp,
+     source = "gridkit-systemmodel-layout-lowered-raw"}
+
+  enzymexla.sundials.ida_solve residual = @gridkitSystemModelLayoutResidual
+    jacobian = @gridkitSystemModelLayoutMaterializedJacobian
+    jacobian_action = @systemmodel_layout_effective_action
+    linear_solver = <jacobian_action_iterative>
+    jacobian_demand = <jacobian_action>
+    () {enzymexla.sundials.matrix_free_selected,
+        source_function = "gridkit_systemmodel_layout_generated_runtime"} : () -> ()
+}
+SYSTEM_LAYOUT_RUNTIME_MLIR_EOF
+
+      system_layout_runtime_attempted="true"
+      set +e
+      "${enzymexlamlir_opt}" --emit-sundials-ida-runtime-glue-llvm \
+        "${system_layout_runtime_input_mlir}" \
+        > "${system_layout_runtime_mlir}" 2> "${system_layout_runtime_log}"
+      system_layout_runtime_status=$?
+      set -e
+
+      if [[ "${system_layout_runtime_status}" -eq 0 ]]; then
+        set +e
+        "${enzymexlamlir_opt}" --strip-sundials-ida-runtime-glue-metadata \
+          "${system_layout_runtime_mlir}" \
+          > "${system_layout_runtime_llvm_mlir}" \
+          2> "${system_layout_runtime_strip_log}"
+        system_layout_runtime_strip_status=$?
+        set -e
+      fi
+
+      if [[ -n "${system_layout_runtime_strip_status}" &&
+            "${system_layout_runtime_strip_status}" -eq 0 ]]; then
+        set +e
+        "${mlir_translate}" --mlir-to-llvmir \
+          "${system_layout_runtime_llvm_mlir}" \
+          -o "${system_layout_runtime_llvm_ir}" \
+          > "${system_layout_runtime_translate_log}" 2>&1
+        system_layout_runtime_translate_status=$?
+        set -e
+      fi
+
+      if [[ -n "${system_layout_runtime_translate_status}" &&
+            "${system_layout_runtime_translate_status}" -eq 0 ]]; then
+        set +e
+        "${llc_tool}" -function-sections -data-sections -filetype=obj \
+          "${system_layout_runtime_llvm_ir}" \
+          -o "${system_layout_runtime_object}" \
+          > "${system_layout_runtime_compile_log}" 2>&1
+        system_layout_runtime_object_status=$?
+        system_layout_runtime_compile_status="${system_layout_runtime_object_status}"
+        set -e
+      fi
+
+      if [[ -n "${system_layout_raw_kernel_compile_status}" &&
+            "${system_layout_raw_kernel_compile_status}" -eq 0 &&
+            -n "${system_layout_runtime_object_status}" &&
+            "${system_layout_runtime_object_status}" -eq 0 ]]; then
         system_sundials_smoke_attempted="true"
         set +e
         "${runtime_smoke_cxx}" -std=c++20 -O0 -g -pthread \
@@ -1209,6 +1178,7 @@ SYSTEM_LAYOUT_RUNTIME_EOF
           -I"${suitesparse_include}" \
           "${system_sundials_smoke_src}" \
           "${system_layout_derivative_object}" \
+          "${system_layout_raw_kernel_object}" \
           "${system_layout_runtime_object}" \
           "${sundials_solvers_lib}" \
           "${sundials_sparse_matrix_lib}" \
@@ -1374,6 +1344,31 @@ if [[ -n "${system_layout_smoke_run_status}" ]]; then
 else
   system_layout_smoke_run_exit_json="null"
 fi
+if [[ -n "${system_layout_raw_kernel_compile_status}" ]]; then
+  system_layout_raw_kernel_compile_exit_json="${system_layout_raw_kernel_compile_status}"
+else
+  system_layout_raw_kernel_compile_exit_json="null"
+fi
+if [[ -n "${system_layout_runtime_status}" ]]; then
+  system_layout_runtime_exit_json="${system_layout_runtime_status}"
+else
+  system_layout_runtime_exit_json="null"
+fi
+if [[ -n "${system_layout_runtime_strip_status}" ]]; then
+  system_layout_runtime_strip_exit_json="${system_layout_runtime_strip_status}"
+else
+  system_layout_runtime_strip_exit_json="null"
+fi
+if [[ -n "${system_layout_runtime_translate_status}" ]]; then
+  system_layout_runtime_translate_exit_json="${system_layout_runtime_translate_status}"
+else
+  system_layout_runtime_translate_exit_json="null"
+fi
+if [[ -n "${system_layout_runtime_object_status}" ]]; then
+  system_layout_runtime_object_exit_json="${system_layout_runtime_object_status}"
+else
+  system_layout_runtime_object_exit_json="null"
+fi
 if [[ -n "${system_layout_runtime_compile_status}" ]]; then
   system_layout_runtime_compile_exit_json="${system_layout_runtime_compile_status}"
 else
@@ -1532,6 +1527,13 @@ printf '    "smoke_compile_exit_code": %s,\n' "${system_layout_smoke_compile_exi
 printf '    "smoke_run_exit_code": %s,\n' "${system_layout_smoke_run_exit_json}" >> "${summary}"
 printf '    "ida_runtime_attempted": %s,\n' "${system_layout_runtime_attempted}" >> "${summary}"
 printf '    "ida_runtime_skipped_reason": %s,\n' "$(json_string "${system_layout_runtime_skipped_reason}")" >> "${summary}"
+printf '    "raw_kernel_attempted": %s,\n' "${system_layout_raw_kernel_attempted}" >> "${summary}"
+printf '    "raw_kernel_skipped_reason": %s,\n' "$(json_string "${system_layout_raw_kernel_skipped_reason}")" >> "${summary}"
+printf '    "raw_kernel_compile_exit_code": %s,\n' "${system_layout_raw_kernel_compile_exit_json}" >> "${summary}"
+printf '    "ida_runtime_lower_exit_code": %s,\n' "${system_layout_runtime_exit_json}" >> "${summary}"
+printf '    "ida_runtime_strip_exit_code": %s,\n' "${system_layout_runtime_strip_exit_json}" >> "${summary}"
+printf '    "ida_runtime_translate_exit_code": %s,\n' "${system_layout_runtime_translate_exit_json}" >> "${summary}"
+printf '    "ida_runtime_object_exit_code": %s,\n' "${system_layout_runtime_object_exit_json}" >> "${summary}"
 printf '    "ida_runtime_compile_exit_code": %s,\n' "${system_layout_runtime_compile_exit_json}" >> "${summary}"
 printf '    "ida_sundials_smoke_attempted": %s,\n' "${system_sundials_smoke_attempted}" >> "${summary}"
 printf '    "ida_sundials_smoke_enabled": %s,\n' "$([[ "${run_real_sundials_smoke}" == "1" ]] && printf true || printf false)" >> "${summary}"
@@ -1543,9 +1545,18 @@ printf '    "ida_sundials_smoke_harness": %s,\n' "$(json_string "${system_sundia
 printf '    "derivative_source": %s,\n' "$(json_string "${system_layout_derivative_src}")" >> "${summary}"
 printf '    "derivative_object": %s,\n' "$(json_string "${system_layout_derivative_object}")" >> "${summary}"
 printf '    "derivative_compile_log": %s,\n' "$(json_string "${system_layout_derivative_compile_log}")" >> "${summary}"
-printf '    "ida_runtime_source": %s,\n' "$(json_string "${system_layout_runtime_src}")" >> "${summary}"
+printf '    "raw_kernel_source": %s,\n' "$(json_string "${system_layout_raw_kernel_src}")" >> "${summary}"
+printf '    "raw_kernel_object": %s,\n' "$(json_string "${system_layout_raw_kernel_object}")" >> "${summary}"
+printf '    "raw_kernel_compile_log": %s,\n' "$(json_string "${system_layout_raw_kernel_compile_log}")" >> "${summary}"
+printf '    "ida_runtime_input_mlir": %s,\n' "$(json_string "${system_layout_runtime_input_mlir}")" >> "${summary}"
+printf '    "ida_runtime_mlir": %s,\n' "$(json_string "${system_layout_runtime_mlir}")" >> "${summary}"
+printf '    "ida_runtime_llvm_mlir": %s,\n' "$(json_string "${system_layout_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "ida_runtime_llvm_ir": %s,\n' "$(json_string "${system_layout_runtime_llvm_ir}")" >> "${summary}"
 printf '    "ida_runtime_object": %s,\n' "$(json_string "${system_layout_runtime_object}")" >> "${summary}"
-printf '    "ida_runtime_compile_log": %s,\n' "$(json_string "${system_layout_runtime_compile_log}")" >> "${summary}"
+printf '    "ida_runtime_log": %s,\n' "$(json_string "${system_layout_runtime_log}")" >> "${summary}"
+printf '    "ida_runtime_strip_log": %s,\n' "$(json_string "${system_layout_runtime_strip_log}")" >> "${summary}"
+printf '    "ida_runtime_translate_log": %s,\n' "$(json_string "${system_layout_runtime_translate_log}")" >> "${summary}"
+printf '    "ida_runtime_object_log": %s,\n' "$(json_string "${system_layout_runtime_compile_log}")" >> "${summary}"
 printf '    "smoke_executable": %s,\n' "$(json_string "${system_layout_smoke_exe}")" >> "${summary}"
 printf '    "smoke_log": %s,\n' "$(json_string "${system_layout_smoke_log}")" >> "${summary}"
 printf '    "ida_sundials_smoke_executable": %s,\n' "$(json_string "${system_sundials_smoke_exe}")" >> "${summary}"
@@ -1576,7 +1587,11 @@ printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(count_lines "${bridge_r
 printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(count_lines "${bridge_generated_derivative_src}")" >> "${summary}"
 printf '    "semantic_bridge_real_sundials_component_harness": %s,\n' "$(count_lines "${runtime_real_sundials_component_src}")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_derivative_source": %s,\n' "$(count_lines "${system_layout_derivative_src}")" >> "${summary}"
-printf '    "systemmodel_generated_jvp_runtime_source": %s,\n' "$(count_lines "${system_layout_runtime_src}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_raw_kernel_source": %s,\n' "$(count_lines "${system_layout_raw_kernel_src}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_input_mlir": %s,\n' "$(count_lines "${system_layout_runtime_input_mlir}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_mlir": %s,\n' "$(count_lines "${system_layout_runtime_mlir}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_llvm_mlir": %s,\n' "$(count_lines "${system_layout_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_llvm_ir": %s,\n' "$(count_lines "${system_layout_runtime_llvm_ir}")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_smoke_harness": %s,\n' "$(count_lines "${system_layout_smoke_src}")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_sundials_harness": %s\n' "$(count_lines "${system_sundials_smoke_src}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
@@ -1793,7 +1808,12 @@ printf '    "semantic_bridge_runtime_real_smoke_executable": %s,\n' "$(json_stri
 printf '    "semantic_bridge_runtime_real_sundials_component_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_sundials_component_exe}")")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_derivative_source": %s,\n' "$(json_string "$(file_sha256 "${system_layout_derivative_src}")")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_derivative_object": %s,\n' "$(json_string "$(file_sha256 "${system_layout_derivative_object}")")" >> "${summary}"
-printf '    "systemmodel_generated_jvp_runtime_source": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_src}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_raw_kernel_source": %s,\n' "$(json_string "$(file_sha256 "${system_layout_raw_kernel_src}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_raw_kernel_object": %s,\n' "$(json_string "$(file_sha256 "${system_layout_raw_kernel_object}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_input_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_input_mlir}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_mlir}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_llvm_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_llvm_mlir}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_runtime_llvm_ir": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_llvm_ir}")")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_runtime_object": %s,\n' "$(json_string "$(file_sha256 "${system_layout_runtime_object}")")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_smoke_executable": %s,\n' "$(json_string "$(file_sha256 "${system_layout_smoke_exe}")")" >> "${summary}"
 printf '    "systemmodel_generated_jvp_sundials_executable": %s\n' "$(json_string "$(file_sha256 "${system_sundials_smoke_exe}")")" >> "${summary}"
@@ -1881,8 +1901,23 @@ fi
 if [[ -f "${system_layout_derivative_object}" ]]; then
   echo "wrote ${system_layout_derivative_object}"
 fi
-if [[ -f "${system_layout_runtime_src}" ]]; then
-  echo "wrote ${system_layout_runtime_src}"
+if [[ -f "${system_layout_raw_kernel_src}" ]]; then
+  echo "wrote ${system_layout_raw_kernel_src}"
+fi
+if [[ -f "${system_layout_raw_kernel_object}" ]]; then
+  echo "wrote ${system_layout_raw_kernel_object}"
+fi
+if [[ -f "${system_layout_runtime_input_mlir}" ]]; then
+  echo "wrote ${system_layout_runtime_input_mlir}"
+fi
+if [[ -f "${system_layout_runtime_mlir}" ]]; then
+  echo "wrote ${system_layout_runtime_mlir}"
+fi
+if [[ -f "${system_layout_runtime_llvm_mlir}" ]]; then
+  echo "wrote ${system_layout_runtime_llvm_mlir}"
+fi
+if [[ -f "${system_layout_runtime_llvm_ir}" ]]; then
+  echo "wrote ${system_layout_runtime_llvm_ir}"
 fi
 if [[ -f "${system_layout_runtime_object}" ]]; then
   echo "wrote ${system_layout_runtime_object}"
@@ -2027,6 +2062,36 @@ if [[ -n "${system_layout_smoke_run_status}" &&
       "${system_layout_smoke_run_status}" -ne 0 ]]; then
   echo "GridKit SystemModel-layout JVP smoke run failed; see ${system_layout_smoke_log}" >&2
   exit "${system_layout_smoke_run_status}"
+fi
+
+if [[ -n "${system_layout_raw_kernel_compile_status}" &&
+      "${system_layout_raw_kernel_compile_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout raw JVP kernel compile failed; see ${system_layout_raw_kernel_compile_log}" >&2
+  exit "${system_layout_raw_kernel_compile_status}"
+fi
+
+if [[ -n "${system_layout_runtime_status}" &&
+      "${system_layout_runtime_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout IDA runtime glue lowering failed; see ${system_layout_runtime_log}" >&2
+  exit "${system_layout_runtime_status}"
+fi
+
+if [[ -n "${system_layout_runtime_strip_status}" &&
+      "${system_layout_runtime_strip_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout IDA runtime metadata strip failed; see ${system_layout_runtime_strip_log}" >&2
+  exit "${system_layout_runtime_strip_status}"
+fi
+
+if [[ -n "${system_layout_runtime_translate_status}" &&
+      "${system_layout_runtime_translate_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout IDA runtime LLVM translation failed; see ${system_layout_runtime_translate_log}" >&2
+  exit "${system_layout_runtime_translate_status}"
+fi
+
+if [[ -n "${system_layout_runtime_object_status}" &&
+      "${system_layout_runtime_object_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout IDA runtime object generation failed; see ${system_layout_runtime_compile_log}" >&2
+  exit "${system_layout_runtime_object_status}"
 fi
 
 if [[ -n "${system_layout_runtime_compile_status}" &&
