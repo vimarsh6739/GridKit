@@ -187,6 +187,9 @@ namespace AnalysisManager
                                   N_Vector rhsQB,
                                   void*    user_data);
 
+      std::optional<int> configureGeneratedJvpLinearSolver();
+      void               teardownGeneratedJvpLinearSolver();
+
     private:
       static constexpr ScalarT DEFAULT_REL_TOL = 1e-5;
 
@@ -196,6 +199,8 @@ namespace AnalysisManager
       SUNMatrix       JacobianMatB_{};
       SUNLinearSolver linearSolver_{};
       SUNLinearSolver linearSolverB_{};
+      bool            generatedJvpConfigured_{false};
+      void*           generatedJvpContext_{};
 
       RealT t_init_{};
       RealT t_final_{};

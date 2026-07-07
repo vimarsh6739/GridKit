@@ -30,12 +30,44 @@ namespace AnalysisManager
         std::vector<void*> owned_inputs{};
       };
 
+      using IdaGeneratedJvpSetupFn = int (*)(void*,
+                                             void*,
+                                             void*,
+                                             void*,
+                                             void**,
+                                             std::int64_t,
+                                             void**);
+      using IdaGeneratedJvpTeardownFn = void (*)(void*);
+      using IdaGeneratedJvpInputProviderFn = std::int64_t (*)(void*,
+                                                              void**,
+                                                              std::int64_t);
+
+      struct IdaGeneratedJvpHostHooks
+      {
+        IdaGeneratedJvpSetupFn         setup{};
+        IdaGeneratedJvpTeardownFn      teardown{};
+        IdaGeneratedJvpInputProviderFn input_provider{};
+      };
+
       void registerIdaJvpUserData(IdaJvpUserData* user_data);
       void unregisterIdaJvpUserData(IdaJvpUserData* user_data);
       bool isIdaJvpUserData(const void* user_data);
       void* unwrapIdaUserDataModel(void* user_data);
       void rememberIdaJvpUserData(void* owner, IdaJvpUserData* user_data);
       IdaJvpUserData* takeRememberedIdaJvpUserData(void* owner);
+      void rememberIdaGeneratedLinearSolver(void* owner, void* linear_solver);
+      void* takeRememberedIdaGeneratedLinearSolver(void* owner);
+      IdaGeneratedJvpHostHooks generatedIdaJvpHostHooks();
+      bool hasGeneratedIdaJvpHostSplice();
+      std::vector<void*> collectGeneratedIdaJvpInputs(void* model);
+      int configureGeneratedIdaJvp(void* ida_mem,
+                                   void* yy_template,
+                                   void* sunctx,
+                                   void* model,
+                                   void** inputs,
+                                   std::int64_t input_count,
+                                   void** context_out);
+      void teardownGeneratedIdaJvp(void* ida_mem);
     } // namespace Runtime
   } // namespace Sundials
 } // namespace AnalysisManager
@@ -62,3 +94,8 @@ extern "C" void __enzymexla_sundials_ida_destroy_remembered_jvp_context(void* id
 extern "C" void __enzymexla_sundials_ida_register_jvp_context(void* user_data);
 
 extern "C" void __enzymexla_sundials_ida_unregister_jvp_context(void* user_data);
+
+extern "C" void __enzymexla_sundials_ida_remember_linear_solver(void* ida_mem,
+                                                                  void* linear_solver);
+
+extern "C" void __enzymexla_sundials_ida_destroy_remembered_linear_solver(void* ida_mem);

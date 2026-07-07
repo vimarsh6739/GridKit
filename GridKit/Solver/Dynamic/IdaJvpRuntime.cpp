@@ -5,6 +5,23 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(__GNUC__) || defined(__clang__)
+extern "C" int SUNLinSolFree(void* linear_solver) __attribute__((weak));
+extern "C" int __enzymexla_sundials_ida_setup_generated_jactimes(void* ida_mem,
+                                                                  void* yy_template,
+                                                                  void* sunctx,
+                                                                  void* model,
+                                                                  void** inputs,
+                                                                  std::int64_t input_count,
+                                                                  void** context_out) __attribute__((weak));
+extern "C" void __enzymexla_sundials_ida_teardown_generated_jactimes(void* ida_mem) __attribute__((weak));
+extern "C" std::int64_t __enzymexla_sundials_ida_fill_generated_jvp_inputs(void* model,
+                                                                             void** inputs,
+                                                                             std::int64_t input_capacity) __attribute__((weak));
+#else
+extern "C" int SUNLinSolFree(void* linear_solver);
+#endif
+
 namespace AnalysisManager
 {
   namespace Sundials
@@ -35,6 +52,31 @@ namespace AnalysisManager
         {
           static std::unordered_map<const void*, IdaJvpUserData*> registry;
           return registry;
+        }
+
+        std::mutex& linearSolverRegistryMutex()
+        {
+          static std::mutex registry_mutex;
+          return registry_mutex;
+        }
+
+        std::unordered_map<const void*, void*>& linearSolverRegistry()
+        {
+          static std::unordered_map<const void*, void*> registry;
+          return registry;
+        }
+
+        void destroyGeneratedIdaLinearSolver(void* linear_solver)
+        {
+          if (linear_solver == nullptr)
+          {
+            return;
+          }
+
+          if (SUNLinSolFree != nullptr)
+          {
+            (void) SUNLinSolFree(linear_solver);
+          }
         }
 
       } // namespace
@@ -143,6 +185,123 @@ namespace AnalysisManager
         IdaJvpUserData* user_data = found->second;
         ownerRegistry().erase(found);
         return user_data;
+      }
+
+      void rememberIdaGeneratedLinearSolver(void* owner, void* linear_solver)
+      {
+        if (owner == nullptr || linear_solver == nullptr)
+        {
+          return;
+        }
+
+        void* replaced = nullptr;
+        {
+          std::lock_guard<std::mutex> lock(linearSolverRegistryMutex());
+          auto& slot = linearSolverRegistry()[owner];
+          if (slot == linear_solver)
+          {
+            return;
+          }
+          replaced = slot;
+          slot     = linear_solver;
+        }
+
+        destroyGeneratedIdaLinearSolver(replaced);
+      }
+
+      void* takeRememberedIdaGeneratedLinearSolver(void* owner)
+      {
+        if (owner == nullptr)
+        {
+          return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(linearSolverRegistryMutex());
+        auto                        found = linearSolverRegistry().find(owner);
+        if (found == linearSolverRegistry().end())
+        {
+          return nullptr;
+        }
+
+        void* linear_solver = found->second;
+        linearSolverRegistry().erase(found);
+        return linear_solver;
+      }
+
+      IdaGeneratedJvpHostHooks generatedIdaJvpHostHooks()
+      {
+        IdaGeneratedJvpHostHooks hooks{};
+#if defined(__GNUC__) || defined(__clang__)
+        hooks.setup          = __enzymexla_sundials_ida_setup_generated_jactimes;
+        hooks.teardown       = __enzymexla_sundials_ida_teardown_generated_jactimes;
+        hooks.input_provider = __enzymexla_sundials_ida_fill_generated_jvp_inputs;
+#endif
+        return hooks;
+      }
+
+      bool hasGeneratedIdaJvpHostSplice()
+      {
+        const IdaGeneratedJvpHostHooks hooks = generatedIdaJvpHostHooks();
+        return hooks.setup != nullptr && hooks.teardown != nullptr &&
+               hooks.input_provider != nullptr;
+      }
+
+      std::vector<void*> collectGeneratedIdaJvpInputs(void* model)
+      {
+        const IdaGeneratedJvpHostHooks hooks = generatedIdaJvpHostHooks();
+        if (model == nullptr || hooks.input_provider == nullptr)
+        {
+          return {};
+        }
+
+        const std::int64_t input_count =
+          hooks.input_provider(model, nullptr, 0);
+        if (input_count <= 0)
+        {
+          return {};
+        }
+
+        std::vector<void*> inputs(static_cast<std::size_t>(input_count), nullptr);
+        const std::int64_t filled =
+          hooks.input_provider(model, inputs.data(), input_count);
+        if (filled != input_count)
+        {
+          return {};
+        }
+
+        return inputs;
+      }
+
+      int configureGeneratedIdaJvp(void* ida_mem,
+                                   void* yy_template,
+                                   void* sunctx,
+                                   void* model,
+                                   void** inputs,
+                                   std::int64_t input_count,
+                                   void** context_out)
+      {
+        const IdaGeneratedJvpHostHooks hooks = generatedIdaJvpHostHooks();
+        if (hooks.setup == nullptr)
+        {
+          return 1;
+        }
+
+        return hooks.setup(ida_mem,
+                           yy_template,
+                           sunctx,
+                           model,
+                           inputs,
+                           input_count,
+                           context_out);
+      }
+
+      void teardownGeneratedIdaJvp(void* ida_mem)
+      {
+        const IdaGeneratedJvpHostHooks hooks = generatedIdaJvpHostHooks();
+        if (hooks.teardown != nullptr)
+        {
+          hooks.teardown(ida_mem);
+        }
       }
     } // namespace Runtime
   } // namespace Sundials
@@ -288,4 +447,23 @@ extern "C" void __enzymexla_sundials_ida_unregister_jvp_context(void* user_data)
   using AnalysisManager::Sundials::Runtime::unregisterIdaJvpUserData;
 
   unregisterIdaJvpUserData(static_cast<IdaJvpUserData*>(user_data));
+}
+
+extern "C" void __enzymexla_sundials_ida_remember_linear_solver(void* ida_mem,
+                                                                  void* linear_solver)
+{
+  using AnalysisManager::Sundials::Runtime::rememberIdaGeneratedLinearSolver;
+
+  rememberIdaGeneratedLinearSolver(ida_mem, linear_solver);
+}
+
+extern "C" void __enzymexla_sundials_ida_destroy_remembered_linear_solver(void* ida_mem)
+{
+  using AnalysisManager::Sundials::Runtime::takeRememberedIdaGeneratedLinearSolver;
+
+  void* linear_solver = takeRememberedIdaGeneratedLinearSolver(ida_mem);
+  if (linear_solver != nullptr && SUNLinSolFree != nullptr)
+  {
+    (void) SUNLinSolFree(linear_solver);
+  }
 }

@@ -462,6 +462,18 @@ namespace GridKit
           &direct_destroy_ida_mem_token);
         success *= (__enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, -1, 3) == nullptr);
 
+        double linear_solver_owner = 0.0;
+        double linear_solver_token = 0.0;
+        AnalysisManager::Sundials::Runtime::rememberIdaGeneratedLinearSolver(
+          &linear_solver_owner,
+          &linear_solver_token);
+        success *= (AnalysisManager::Sundials::Runtime::takeRememberedIdaGeneratedLinearSolver(
+                      &linear_solver_owner) == &linear_solver_token);
+        success *= (AnalysisManager::Sundials::Runtime::takeRememberedIdaGeneratedLinearSolver(
+                      &linear_solver_owner) == nullptr);
+        __enzymexla_sundials_ida_destroy_remembered_linear_solver(
+          &linear_solver_owner);
+
         return success.report(__func__);
       }
     };

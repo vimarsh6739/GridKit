@@ -366,7 +366,9 @@ that selected solve and emits
 symbol, SUNDIALS declarations, and a registration helper that constructs
 `SUNLinSol_SPGMR`, registers the generated JVP context with
 `__enzymexla_sundials_ida_register_jvp_context`, calls `IDASetUserData`, calls
-`IDASetLinearSolver`, and registers the callback with `IDASetJacTimes`. The
+`__enzymexla_sundials_ida_remember_linear_solver` so the generated iterative
+solver is owned by the IDA memory handle, calls `IDASetLinearSolver`, and
+registers the callback with `IDASetJacTimes`. The
 same pass now also emits a host-facing context setup helper that calls
 `N_VGetLength(yy)` to derive the residual output size, marks that call with
 `enzymexla.sundials.role = "ida_jvp_context_output_size"`, calls
@@ -375,7 +377,8 @@ under the IDA memory owner through
 `__enzymexla_sundials_ida_remember_jvp_context`, stores the context pointer
 through an out parameter for immediate callers, and delegates to the generated
 registration helper, plus a teardown helper that takes the IDA memory pointer
-and calls `__enzymexla_sundials_ida_destroy_remembered_jvp_context`. The pass
+and calls `__enzymexla_sundials_ida_destroy_remembered_linear_solver` before
+`__enzymexla_sundials_ida_destroy_remembered_jvp_context`. The pass
 also emits host-facing setup and teardown dispatcher entry points; in the
 single-solve module case these use the stable C symbols
 `__enzymexla_sundials_ida_setup_generated_jactimes` and
@@ -751,7 +754,8 @@ selection chooses an action carrying
 for the same materializer. The runtime-glue lowering test checks that a
 selected matrix-free IDA solve emits SUNDIALS declarations, a generated
 JacTimes callback symbol, and a registration helper with `SUNLinSol_SPGMR`,
-`IDASetUserData`, `IDASetLinearSolver`, and `IDASetJacTimes`. The same test now
+generated linear-solver ownership, `IDASetUserData`, `IDASetLinearSolver`, and
+`IDASetJacTimes`. The same test now
 also covers context output-size discovery through `N_VGetLength`, the
 semantic-action adapter path through `N_VScale`,
 `N_VGetArrayPointer`, the generated raw-buffer kernel boundary, and the
@@ -786,9 +790,9 @@ repeatable artifact path and records the default-pipeline crash separately.
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
    the synthesized Jacobian action records, or raise both source regions in one
    artifact so no overlay is needed.
-2. Splice the generated context setup and teardown helpers into the host
-   executable path, including model, residual input-array, and context-lifetime
-   plumbing.
+2. Complete the generated host splice by emitting or linking the generated
+   input-provider that populates the callback context inputs, then run it
+   through GridKit's IDA configuration path.
 3. Run a full GridKit IDA simulation through the generated JVP path without
    requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
 4. Either narrow the Reactant default pipeline around this source region or fix

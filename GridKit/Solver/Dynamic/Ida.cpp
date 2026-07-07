@@ -113,6 +113,12 @@ namespace AnalysisManager
     {
       int retval = 0;
 
+      if (std::optional<int> generated_status =
+            this->configureGeneratedJvpLinearSolver())
+      {
+        return *generated_status;
+      }
+
 /// Todo - Implement a cleaner way to handle the Sparse versus Dense solvers
 #ifdef GRIDKIT_ENABLE_SUNDIALS_SPARSE
       if (model_->hasJacobian())
@@ -134,6 +140,54 @@ namespace AnalysisManager
 #endif
 
       return retval;
+    }
+
+    template <class ScalarT, typename IdxT>
+    std::optional<int> Ida<ScalarT, IdxT>::configureGeneratedJvpLinearSolver()
+    {
+      if (!Runtime::hasGeneratedIdaJvpHostSplice())
+      {
+        return std::nullopt;
+      }
+
+      std::vector<void*> inputs =
+        Runtime::collectGeneratedIdaJvpInputs(model_);
+      if (inputs.empty())
+      {
+        return std::nullopt;
+      }
+
+      void* context = nullptr;
+      const int retval =
+        Runtime::configureGeneratedIdaJvp(solver_,
+                                          yy_,
+                                          context_,
+                                          model_,
+                                          inputs.data(),
+                                          static_cast<std::int64_t>(inputs.size()),
+                                          &context);
+      if (retval != 0 || context == nullptr)
+      {
+        Runtime::teardownGeneratedIdaJvp(solver_);
+        return retval == 0 ? 1 : retval;
+      }
+
+      generatedJvpConfigured_ = true;
+      generatedJvpContext_    = context;
+      return 0;
+    }
+
+    template <class ScalarT, typename IdxT>
+    void Ida<ScalarT, IdxT>::teardownGeneratedJvpLinearSolver()
+    {
+      if (!generatedJvpConfigured_)
+      {
+        return;
+      }
+
+      Runtime::teardownGeneratedIdaJvp(solver_);
+      generatedJvpConfigured_ = false;
+      generatedJvpContext_    = nullptr;
     }
 
 #ifdef GRIDKIT_ENABLE_SUNDIALS_SPARSE
@@ -354,6 +408,7 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::deleteSimulation()
     {
+      teardownGeneratedJvpLinearSolver();
       N_VDestroy(yy_);
       N_VDestroy(yp_);
       N_VDestroy(tag_);
