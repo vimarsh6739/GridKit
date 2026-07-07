@@ -48,6 +48,7 @@ bridge_runtime_strip_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_strip.
 bridge_runtime_translate_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_translate.log"
 bridge_runtime_object_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_object.log"
 bridge_runtime_symbols="${out_dir}/gridkit_semantic_bridge_runtime_glue_symbols.txt"
+bridge_runtime_undefined_symbols="${out_dir}/gridkit_semantic_bridge_runtime_glue_undefined_symbols.txt"
 bridge_runtime_smoke_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_smoke"
 bridge_runtime_smoke_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_smoke.log"
 
@@ -270,6 +271,7 @@ bridge_runtime_strip_status=""
 bridge_runtime_translate_status=""
 bridge_runtime_object_status=""
 bridge_runtime_symbols_status=""
+bridge_runtime_undefined_symbols_status=""
 bridge_runtime_smoke_attempted="false"
 bridge_runtime_smoke_skipped_reason=""
 bridge_runtime_smoke_compile_status=""
@@ -371,6 +373,9 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
               "${llvm_nm_tool}" -g --defined-only "${bridge_runtime_object}" \
                 > "${bridge_runtime_symbols}" 2>> "${bridge_runtime_object_log}"
               bridge_runtime_symbols_status=$?
+              "${llvm_nm_tool}" -g --undefined-only "${bridge_runtime_object}" \
+                > "${bridge_runtime_undefined_symbols}" 2>> "${bridge_runtime_object_log}"
+              bridge_runtime_undefined_symbols_status=$?
               set -e
             fi
 
@@ -471,6 +476,11 @@ if [[ -n "${bridge_runtime_symbols_status}" ]]; then
 else
   bridge_runtime_symbols_exit_json="null"
 fi
+if [[ -n "${bridge_runtime_undefined_symbols_status}" ]]; then
+  bridge_runtime_undefined_symbols_exit_json="${bridge_runtime_undefined_symbols_status}"
+else
+  bridge_runtime_undefined_symbols_exit_json="null"
+fi
 if [[ -n "${bridge_runtime_smoke_compile_status}" ]]; then
   bridge_runtime_smoke_compile_exit_json="${bridge_runtime_smoke_compile_status}"
 else
@@ -538,6 +548,7 @@ printf '    "runtime_strip_exit_code": %s,\n' "${bridge_runtime_strip_exit_json}
 printf '    "runtime_translate_exit_code": %s,\n' "${bridge_runtime_translate_exit_json}" >> "${summary}"
 printf '    "runtime_object_exit_code": %s,\n' "${bridge_runtime_object_exit_json}" >> "${summary}"
 printf '    "runtime_symbols_exit_code": %s,\n' "${bridge_runtime_symbols_exit_json}" >> "${summary}"
+printf '    "runtime_undefined_symbols_exit_code": %s,\n' "${bridge_runtime_undefined_symbols_exit_json}" >> "${summary}"
 printf '    "runtime_smoke_attempted": %s,\n' "${bridge_runtime_smoke_attempted}" >> "${summary}"
 printf '    "runtime_smoke_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_smoke_skipped_reason}")" >> "${summary}"
 printf '    "runtime_smoke_compile_exit_code": %s,\n' "${bridge_runtime_smoke_compile_exit_json}" >> "${summary}"
@@ -549,6 +560,7 @@ printf '    "runtime_llvm_mlir": %s,\n' "$(json_string "${bridge_runtime_llvm_ml
 printf '    "runtime_llvm_ir": %s,\n' "$(json_string "${bridge_runtime_llvm_ir}")" >> "${summary}"
 printf '    "runtime_object": %s,\n' "$(json_string "${bridge_runtime_object}")" >> "${summary}"
 printf '    "runtime_symbols": %s,\n' "$(json_string "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "runtime_undefined_symbols": %s,\n' "$(json_string "${bridge_runtime_undefined_symbols}")" >> "${summary}"
 printf '    "runtime_smoke_executable": %s,\n' "$(json_string "${bridge_runtime_smoke_exe}")" >> "${summary}"
 printf '    "runtime_smoke_harness": %s,\n' "$(json_string "${runtime_smoke_src}")" >> "${summary}"
 printf '    "mlir_translate": %s,\n' "$(json_string "${mlir_translate}")" >> "${summary}"
@@ -697,6 +709,10 @@ printf '    "semantic_bridge_runtime_host_input_resolver_declarations": %s,\n' "
 printf '    "semantic_bridge_runtime_llvm_only_enzymexla_metadata": %s,\n' "$(count_matches "enzymexla." "${bridge_runtime_llvm_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_only_gridkit_metadata": %s,\n' "$(count_matches "gridkit." "${bridge_runtime_llvm_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object_generated_symbols": %s,\n' "$(count_regex "__enzymexla_sundials_ida_(fill_generated_jvp_inputs|setup_generated_jactimes|teardown_generated_jactimes|jactimes_|jvp_kernel_|raw_jvp_kernel_|register_jactimes_|setup_jactimes_|teardown_jactimes_)" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_undefined_symbols": %s,\n' "$(count_regex "^[[:space:]]*U " "${bridge_runtime_undefined_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_unresolved_enzyme_fwddiff_symbols": %s,\n' "$(count_matches "__enzyme_fwddiff" "${bridge_runtime_undefined_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_unresolved_enzyme_activity_symbols": %s,\n' "$(count_regex "^[[:space:]]*U enzyme_(const|dup|dupnoneed)$" "${bridge_runtime_undefined_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_unresolved_runtime_support_symbols": %s,\n' "$(count_regex "__enzymexla_sundials_ida_(accumulate_raw_jvp|context_input|create_jvp_context|destroy_remembered_jvp_context|destroy_remembered_linear_solver|register_jvp_context|remember_jvp_context|remember_linear_solver|resolve_generated_jvp_input)" "${bridge_runtime_undefined_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object_input_provider_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_fill_generated_jvp_inputs" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object_setup_dispatcher_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_setup_generated_jactimes" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object_teardown_dispatcher_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_teardown_generated_jactimes" "${bridge_runtime_symbols}")" >> "${summary}"
@@ -757,6 +773,7 @@ printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(json_string "$(file_sha256
 printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_llvm_mlir}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_llvm_ir}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_object": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_object}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_undefined_symbols": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_undefined_symbols}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_smoke_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_smoke_exe}")")" >> "${summary}"
 printf '  }\n' >> "${summary}"
 printf '}\n' >> "${summary}"
