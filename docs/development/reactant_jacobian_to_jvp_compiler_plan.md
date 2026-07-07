@@ -373,12 +373,15 @@ GridKit now provides a reusable `IdaJvpUserData` support layer with C ABI entry
 points for creating, registering, destroying, and discovering generated callback
 contexts, unwrapping the original model pointer for legacy residual/Jacobian
 callbacks, accessing context inputs, and accumulating the y/yp JVP
-contributions. The remaining executable gap is host splicing: lowered code
-still has to build the residual input pointer array, call the generated context
-setup helper from the host configuration path, keep the returned context pointer
-alive for IDA, and call the generated teardown helper when the solver no longer
-needs the callback. The setup helper now derives the output size from the IDA
-`yy` template via `N_VGetLength`, so host splicing no longer has to supply that
+contributions. Generated contexts copy the residual input pointer slots at
+creation time, so a compiler-generated setup call can assemble a temporary
+pointer array without leaving the later IDA callback with a dangling array
+reference. The remaining executable gap is host splicing: lowered code still
+has to build the residual input pointer array, call the generated context setup
+helper from the host configuration path, keep the returned context pointer alive
+for IDA, and call the generated teardown helper when the solver no longer needs
+the callback. The setup helper now derives the output size from the IDA `yy`
+template via `N_VGetLength`, so host splicing no longer has to supply that
 operand. If those preconditions fail, the fallback raw kernel is still marked
 `semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
 provenance-matching raw kernels are rejected rather than chosen arbitrarily.

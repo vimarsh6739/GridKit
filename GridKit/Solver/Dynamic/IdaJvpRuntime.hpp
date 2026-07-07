@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace AnalysisManager
 {
@@ -14,10 +15,11 @@ namespace AnalysisManager
        *
        * Existing GridKit IDA callbacks historically receive the model pointer
        * directly as SUNDIALS user data. Compiler-generated JVP callbacks need a
-       * little more context: the original model pointer, non-N_Vector residual
-       * inputs, and the output size used to accumulate dF/dy*v and
-       * dF/dyp*(cj*v). The runtime registration keeps this object discoverable
-       * without changing the legacy model-as-user-data ABI.
+       * little more context: the original model pointer, an owned copy of the
+       * non-N_Vector residual input slots, and the output size used to
+       * accumulate dF/dy*v and dF/dyp*(cj*v). The runtime registration keeps
+       * this object discoverable without changing the legacy model-as-user-data
+       * ABI.
        */
       struct IdaJvpUserData
       {
@@ -25,6 +27,7 @@ namespace AnalysisManager
         void**       inputs{};
         std::size_t  input_count{};
         std::size_t  output_size{};
+        std::vector<void*> owned_inputs{};
       };
 
       void registerIdaJvpUserData(IdaJvpUserData* user_data);

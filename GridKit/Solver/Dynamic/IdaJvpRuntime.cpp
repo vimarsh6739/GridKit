@@ -138,12 +138,34 @@ extern "C" void* __enzymexla_sundials_ida_create_jvp_context(void* model,
     return nullptr;
   }
 
-  return new (std::nothrow) IdaJvpUserData{
-    model,
-    inputs,
-    static_cast<std::size_t>(input_count),
-    static_cast<std::size_t>(output_size),
-  };
+  auto* context = new (std::nothrow) IdaJvpUserData{};
+  if (context == nullptr)
+  {
+    return nullptr;
+  }
+
+  context->model       = model;
+  context->input_count = static_cast<std::size_t>(input_count);
+  context->output_size = static_cast<std::size_t>(output_size);
+
+  try
+  {
+    context->owned_inputs.resize(context->input_count, nullptr);
+    for (std::size_t index = 0; index < context->input_count; ++index)
+    {
+      context->owned_inputs[index] =
+        inputs == nullptr ? nullptr : inputs[index];
+    }
+  }
+  catch (...)
+  {
+    delete context;
+    return nullptr;
+  }
+
+  context->inputs =
+    context->owned_inputs.empty() ? nullptr : context->owned_inputs.data();
+  return context;
 }
 
 extern "C" void __enzymexla_sundials_ida_destroy_jvp_context(void* user_data)

@@ -430,6 +430,7 @@ namespace GridKit
           __enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, 4, 3);
         success *= (generated_context != nullptr);
         __enzymexla_sundials_ida_register_jvp_context(generated_context);
+        inputs[3] = nullptr;
 
         double generated_jv[]  = {4.0, 5.0, 6.0};
         double generated_tmp[] = {-1.0, 2.0, 0.25};
