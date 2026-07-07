@@ -18,6 +18,8 @@ extern "C" void __enzymexla_sundials_ida_teardown_generated_jactimes(void* ida_m
 extern "C" std::int64_t __enzymexla_sundials_ida_fill_generated_jvp_inputs(void* model,
                                                                              void** inputs,
                                                                              std::int64_t input_capacity) __attribute__((weak));
+extern "C" void* __enzymexla_sundials_ida_resolve_generated_jvp_input_from_host(void* model,
+                                                                                  std::int64_t input_index) __attribute__((weak));
 #else
 extern "C" int SUNLinSolFree(void* linear_solver);
 #endif
@@ -272,6 +274,25 @@ namespace AnalysisManager
         return inputs;
       }
 
+      void* resolveGeneratedIdaJvpInput(void* model, std::int64_t input_index)
+      {
+        if (input_index == 0)
+        {
+          return model;
+        }
+
+#if defined(__GNUC__) || defined(__clang__)
+        if (__enzymexla_sundials_ida_resolve_generated_jvp_input_from_host != nullptr)
+        {
+          return __enzymexla_sundials_ida_resolve_generated_jvp_input_from_host(
+            model,
+            input_index);
+        }
+#endif
+
+        return nullptr;
+      }
+
       int configureGeneratedIdaJvp(void* ida_mem,
                                    void* yy_template,
                                    void* sunctx,
@@ -466,4 +487,12 @@ extern "C" void __enzymexla_sundials_ida_destroy_remembered_linear_solver(void* 
   {
     (void) SUNLinSolFree(linear_solver);
   }
+}
+
+extern "C" void* __enzymexla_sundials_ida_resolve_generated_jvp_input(void* model,
+                                                                        std::int64_t input_index)
+{
+  using AnalysisManager::Sundials::Runtime::resolveGeneratedIdaJvpInput;
+
+  return resolveGeneratedIdaJvpInput(model, input_index);
 }

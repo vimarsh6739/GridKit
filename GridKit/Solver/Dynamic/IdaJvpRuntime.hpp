@@ -60,6 +60,7 @@ namespace AnalysisManager
       IdaGeneratedJvpHostHooks generatedIdaJvpHostHooks();
       bool hasGeneratedIdaJvpHostSplice();
       std::vector<void*> collectGeneratedIdaJvpInputs(void* model);
+      void* resolveGeneratedIdaJvpInput(void* model, std::int64_t input_index);
       int configureGeneratedIdaJvp(void* ida_mem,
                                    void* yy_template,
                                    void* sunctx,
@@ -99,3 +100,6 @@ extern "C" void __enzymexla_sundials_ida_remember_linear_solver(void* ida_mem,
                                                                   void* linear_solver);
 
 extern "C" void __enzymexla_sundials_ida_destroy_remembered_linear_solver(void* ida_mem);
+
+extern "C" void* __enzymexla_sundials_ida_resolve_generated_jvp_input(void* model,
+                                                                        std::int64_t input_index);

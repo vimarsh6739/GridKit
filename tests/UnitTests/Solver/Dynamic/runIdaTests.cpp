@@ -61,6 +61,12 @@ namespace
     success *= (inputs.size() == 4);
     success *= (inputs[0] == &model);
     success *= (inputs[3] == &work_buffer);
+    success *= (AnalysisManager::Sundials::Runtime::resolveGeneratedIdaJvpInput(
+                  &model,
+                  0) == &model);
+    success *= (AnalysisManager::Sundials::Runtime::resolveGeneratedIdaJvpInput(
+                  &model,
+                  3) == &work_buffer);
 
     {
       Ida<double, size_t> ida(&model);
@@ -147,6 +153,18 @@ extern "C" std::int64_t __enzymexla_sundials_ida_fill_generated_jvp_inputs(void*
   inputs[2] = nullptr;
   inputs[3] = state.work_buffer;
   return input_count;
+}
+
+extern "C" void* __enzymexla_sundials_ida_resolve_generated_jvp_input_from_host(void* model,
+                                                                                  std::int64_t input_index)
+{
+  auto& state = generated_ida_hook_test_state;
+  if (!state.enabled || model != state.expected_model || input_index != 3)
+  {
+    return nullptr;
+  }
+
+  return state.work_buffer;
 }
 
 int main()
