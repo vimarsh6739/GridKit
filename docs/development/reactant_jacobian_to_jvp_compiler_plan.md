@@ -178,6 +178,10 @@ marked_attributes.semantic_bridge_runtime_glue_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_jvp_kernel_adapters_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernels_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernels_linked_attr = 0
+marked_attributes.semantic_bridge_runtime_host_splices_emitted_attr = 1
+marked_attributes.semantic_bridge_runtime_host_splice_records = 1
+marked_attributes.semantic_bridge_runtime_host_splice_plan_roles = 1
+marked_attributes.semantic_bridge_runtime_host_splice_attrs = 1
 marked_attributes.semantic_bridge_runtime_jactimes_callbacks = 1
 marked_attributes.semantic_bridge_runtime_registrations = 1
 marked_attributes.semantic_bridge_runtime_context_setup_functions = 1
@@ -200,9 +204,9 @@ marked_attributes.semantic_bridge_runtime_context_input_calls = 4
 marked_attributes.semantic_bridge_runtime_raw_context_input_indices_attrs = 1
 marked_attributes.semantic_bridge_runtime_raw_non_model_context_input_indices_attrs = 1
 marked_attributes.semantic_bridge_runtime_raw_context_input_count_attrs = 1
-marked_attributes.semantic_bridge_runtime_context_input_indices_attrs = 3
-marked_attributes.semantic_bridge_runtime_non_model_context_input_indices_attrs = 3
-marked_attributes.semantic_bridge_runtime_context_input_count_attrs = 3
+marked_attributes.semantic_bridge_runtime_context_input_indices_attrs = 4
+marked_attributes.semantic_bridge_runtime_non_model_context_input_indices_attrs = 4
+marked_attributes.semantic_bridge_runtime_context_input_count_attrs = 4
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_calls = 1
 marked_attributes.semantic_bridge_runtime_context_input_declarations = 1
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_declarations = 1
@@ -356,8 +360,12 @@ same pass now also emits a host-facing context setup helper that calls
 `__enzymexla_sundials_ida_create_jvp_context`, stores the resulting context
 pointer through an out parameter, and delegates to the generated registration
 helper, plus a teardown helper that calls
-`__enzymexla_sundials_ida_destroy_jvp_context`. The setup, registration,
-teardown, and JacTimes callback helpers now carry
+`__enzymexla_sundials_ida_destroy_jvp_context`. The pass also emits a symbolic
+`enzymexla.sundials.ida_host_splice` plan and points the selected solve at it
+with `enzymexla.sundials.runtime_host_splice`; the plan names the generated
+setup, teardown, registration, JacTimes callback, JVP adapter, and raw JVP
+kernel symbols in one host-rewrite target. The setup, registration, teardown,
+JacTimes callback, and host-splice plan now carry
 `enzymexla.sundials.host_linear_solver_source_function` and
 `enzymexla.sundials.host_jacobian_registration_source_function` attributes
 derived from the recovered host region; for the current GridKit artifact both
@@ -400,7 +408,8 @@ loaded through `__enzymexla_sundials_ida_context_input(user_data, index)`. The
 generated raw kernel records `enzymexla.sundials.context_input_indices = [0, 3]`,
 `enzymexla.sundials.non_model_context_input_indices = [3]`, and
 `enzymexla.sundials.context_input_count = 4 : i64`; the solve plus generated
-setup/registration helpers carry the matching `runtime_*` context-input
+host-splice/setup/registration helpers carry the matching `runtime_*`
+context-input
 contract, so the later host splice no longer has to infer the residual input
 array shape from callback body calls.
 GridKit now provides a reusable `IdaJvpUserData` support layer with C ABI entry
