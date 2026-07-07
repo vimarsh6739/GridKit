@@ -22,6 +22,9 @@ object_file="${out_dir}/genclassical_reactant_roundtrip.o"
 roundtrip_log="${out_dir}/genclassical_reactant_roundtrip.log"
 summary="${out_dir}/genclassical_reactant_import_export.json"
 enzymexlamlir_opt="${ENZYMEXLAMLIR_OPT:-${workspace_root}/Enzyme-JAX/bazel-bin/enzymexlamlir-opt}"
+mlir_translate="${MLIR_TRANSLATE:-$(command -v mlir-translate || true)}"
+llc_tool="${LLC:-$(command -v llc || true)}"
+llvm_nm_tool="${LLVM_NM:-$(command -v llvm-nm || true)}"
 marked_mlir="${out_dir}/genclassical_reactant_marked_sparse_jacobian.mlir"
 marker_log="${out_dir}/genclassical_reactant_marker.log"
 
@@ -36,6 +39,13 @@ bridge_selected_mlir="${out_dir}/gridkit_semantic_bridge_matrix_free_selected.ml
 bridge_log="${out_dir}/gridkit_semantic_bridge_matrix_free.log"
 bridge_runtime_mlir="${out_dir}/gridkit_semantic_bridge_runtime_glue.mlir"
 bridge_runtime_log="${out_dir}/gridkit_semantic_bridge_runtime_glue.log"
+bridge_runtime_llvm_mlir="${out_dir}/gridkit_semantic_bridge_runtime_glue_llvm_only.mlir"
+bridge_runtime_llvm_ir="${out_dir}/gridkit_semantic_bridge_runtime_glue.ll"
+bridge_runtime_object="${out_dir}/gridkit_semantic_bridge_runtime_glue.o"
+bridge_runtime_strip_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_strip.log"
+bridge_runtime_translate_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_translate.log"
+bridge_runtime_object_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_object.log"
+bridge_runtime_symbols="${out_dir}/gridkit_semantic_bridge_runtime_glue_symbols.txt"
 
 default_imported_mlir="${out_dir}/genclassical_reactant_default_imported.mlir"
 default_object_file="${out_dir}/genclassical_reactant_default.o"
@@ -250,6 +260,12 @@ bridge_skipped_reason=""
 bridge_status=""
 bridge_runtime_attempted="false"
 bridge_runtime_status=""
+bridge_runtime_object_attempted="false"
+bridge_runtime_object_skipped_reason=""
+bridge_runtime_strip_status=""
+bridge_runtime_translate_status=""
+bridge_runtime_object_status=""
+bridge_runtime_symbols_status=""
 if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
       -f "${ida_marked_mlir}" ]]; then
   materialization_line="$(first_matching_regex "enzymexla\\.jacobian_materialization .*source = \"DfDy\"" "${marked_mlir}")"
@@ -310,6 +326,46 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
           "${bridge_selected_mlir}" > "${bridge_runtime_mlir}" 2> "${bridge_runtime_log}"
         bridge_runtime_status=$?
         set -e
+        if [[ "${bridge_runtime_status}" -eq 0 && -f "${bridge_runtime_mlir}" ]]; then
+          if [[ ! -x "${mlir_translate}" ]]; then
+            bridge_runtime_object_skipped_reason="mlir-translate not found; set MLIR_TRANSLATE"
+          elif [[ ! -x "${llc_tool}" ]]; then
+            bridge_runtime_object_skipped_reason="llc not found; set LLC"
+          else
+            bridge_runtime_object_attempted="true"
+            set +e
+            "${enzymexlamlir_opt}" --strip-sundials-ida-runtime-glue-metadata \
+              "${bridge_runtime_mlir}" > "${bridge_runtime_llvm_mlir}" 2> "${bridge_runtime_strip_log}"
+            bridge_runtime_strip_status=$?
+            set -e
+
+            if [[ "${bridge_runtime_strip_status}" -eq 0 ]]; then
+              set +e
+              "${mlir_translate}" --mlir-to-llvmir \
+                "${bridge_runtime_llvm_mlir}" -o "${bridge_runtime_llvm_ir}" \
+                > "${bridge_runtime_translate_log}" 2>&1
+              bridge_runtime_translate_status=$?
+              set -e
+            fi
+
+            if [[ "${bridge_runtime_translate_status}" -eq 0 ]]; then
+              set +e
+              "${llc_tool}" -filetype=obj "${bridge_runtime_llvm_ir}" \
+                -o "${bridge_runtime_object}" > "${bridge_runtime_object_log}" 2>&1
+              bridge_runtime_object_status=$?
+              set -e
+            fi
+
+            if [[ "${bridge_runtime_object_status}" -eq 0 &&
+                  -f "${bridge_runtime_object}" && -x "${llvm_nm_tool}" ]]; then
+              set +e
+              "${llvm_nm_tool}" -g --defined-only "${bridge_runtime_object}" \
+                > "${bridge_runtime_symbols}" 2>> "${bridge_runtime_object_log}"
+              bridge_runtime_symbols_status=$?
+              set -e
+            fi
+          fi
+        fi
       fi
     else
       bridge_status="${awk_status}"
@@ -355,6 +411,26 @@ if [[ -n "${bridge_runtime_status}" ]]; then
   bridge_runtime_exit_json="${bridge_runtime_status}"
 else
   bridge_runtime_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_strip_status}" ]]; then
+  bridge_runtime_strip_exit_json="${bridge_runtime_strip_status}"
+else
+  bridge_runtime_strip_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_translate_status}" ]]; then
+  bridge_runtime_translate_exit_json="${bridge_runtime_translate_status}"
+else
+  bridge_runtime_translate_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_object_status}" ]]; then
+  bridge_runtime_object_exit_json="${bridge_runtime_object_status}"
+else
+  bridge_runtime_object_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_symbols_status}" ]]; then
+  bridge_runtime_symbols_exit_json="${bridge_runtime_symbols_status}"
+else
+  bridge_runtime_symbols_exit_json="null"
 fi
 if [[ -n "${default_status}" ]]; then
   default_exit_json="${default_status}"
@@ -407,11 +483,27 @@ printf '    "skipped_reason": %s,\n' "$(json_string "${bridge_skipped_reason}")"
 printf '    "exit_code": %s,\n' "${bridge_exit_json}" >> "${summary}"
 printf '    "runtime_attempted": %s,\n' "${bridge_runtime_attempted}" >> "${summary}"
 printf '    "runtime_exit_code": %s,\n' "${bridge_runtime_exit_json}" >> "${summary}"
+printf '    "runtime_object_attempted": %s,\n' "${bridge_runtime_object_attempted}" >> "${summary}"
+printf '    "runtime_object_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_object_skipped_reason}")" >> "${summary}"
+printf '    "runtime_strip_exit_code": %s,\n' "${bridge_runtime_strip_exit_json}" >> "${summary}"
+printf '    "runtime_translate_exit_code": %s,\n' "${bridge_runtime_translate_exit_json}" >> "${summary}"
+printf '    "runtime_object_exit_code": %s,\n' "${bridge_runtime_object_exit_json}" >> "${summary}"
+printf '    "runtime_symbols_exit_code": %s,\n' "${bridge_runtime_symbols_exit_json}" >> "${summary}"
 printf '    "input_mlir": %s,\n' "$(json_string "${bridge_mlir}")" >> "${summary}"
 printf '    "selected_mlir": %s,\n' "$(json_string "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "runtime_mlir": %s,\n' "$(json_string "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "runtime_llvm_mlir": %s,\n' "$(json_string "${bridge_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "runtime_llvm_ir": %s,\n' "$(json_string "${bridge_runtime_llvm_ir}")" >> "${summary}"
+printf '    "runtime_object": %s,\n' "$(json_string "${bridge_runtime_object}")" >> "${summary}"
+printf '    "runtime_symbols": %s,\n' "$(json_string "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "mlir_translate": %s,\n' "$(json_string "${mlir_translate}")" >> "${summary}"
+printf '    "llc": %s,\n' "$(json_string "${llc_tool}")" >> "${summary}"
+printf '    "llvm_nm": %s,\n' "$(json_string "${llvm_nm_tool}")" >> "${summary}"
 printf '    "log": %s,\n' "$(json_string "${bridge_log}")" >> "${summary}"
-printf '    "runtime_log": %s\n' "$(json_string "${bridge_runtime_log}")" >> "${summary}"
+printf '    "runtime_log": %s,\n' "$(json_string "${bridge_runtime_log}")" >> "${summary}"
+printf '    "runtime_strip_log": %s,\n' "$(json_string "${bridge_runtime_strip_log}")" >> "${summary}"
+printf '    "runtime_translate_log": %s,\n' "$(json_string "${bridge_runtime_translate_log}")" >> "${summary}"
+printf '    "runtime_object_log": %s\n' "$(json_string "${bridge_runtime_object_log}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "default_pipeline": {\n' >> "${summary}"
 printf '    "attempted": %s,\n' "$([[ "${try_default}" == "1" ]] && printf true || printf false)" >> "${summary}"
@@ -429,7 +521,9 @@ printf '    "ida_host_printed_mlir": %s,\n' "$(count_lines "${ida_printed_mlir}"
 printf '    "ida_host_marked_mlir": %s,\n' "$(count_lines "${ida_marked_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_input_mlir": %s,\n' "$(count_lines "${bridge_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_selected_mlir": %s,\n' "$(count_lines "${bridge_selected_mlir}")" >> "${summary}"
-printf '    "semantic_bridge_runtime_mlir": %s\n' "$(count_lines "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(count_lines "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(count_lines "${bridge_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_ir": %s\n' "$(count_lines "${bridge_runtime_llvm_ir}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "matching_lines": {\n' >> "${summary}"
 printf '    "__enzyme_fwddiff": %s,\n' "$(count_matches "__enzyme_fwddiff" "${printed_mlir}")" >> "${summary}"
@@ -543,6 +637,14 @@ printf '    "semantic_bridge_runtime_host_input_provider_resolve_calls": %s,\n' 
 printf '    "semantic_bridge_runtime_accumulate_raw_jvp_calls": %s,\n' "$(count_matches "ida_raw_jvp_accumulate" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_context_input_declarations": %s,\n' "$(count_regex "llvm\\.func @__enzymexla_sundials_ida_context_input" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_host_input_resolver_declarations": %s,\n' "$(count_regex "llvm\\.func @__enzymexla_sundials_ida_resolve_generated_jvp_input" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_only_enzymexla_metadata": %s,\n' "$(count_matches "enzymexla." "${bridge_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_only_gridkit_metadata": %s,\n' "$(count_matches "gridkit." "${bridge_runtime_llvm_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_generated_symbols": %s,\n' "$(count_regex "__enzymexla_sundials_ida_(fill_generated_jvp_inputs|setup_generated_jactimes|teardown_generated_jactimes|jactimes_|jvp_kernel_|raw_jvp_kernel_|register_jactimes_|setup_jactimes_|teardown_jactimes_)" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_input_provider_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_fill_generated_jvp_inputs" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_setup_dispatcher_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_setup_generated_jactimes" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_teardown_dispatcher_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_teardown_generated_jactimes" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_jactimes_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_jactimes_" "${bridge_runtime_symbols}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object_raw_jvp_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_raw_jvp_kernel_" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "gridkit_runtime_evaluator_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/Evaluator.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_component_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/Component.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_genclassical_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassical.hpp")" >> "${summary}"
@@ -593,7 +695,10 @@ printf '    "ida_host_marked_mlir": %s,\n' "$(json_string "$(file_sha256 "${ida_
 printf '    "ida_host_object": %s,\n' "$(json_string "$(file_sha256 "${ida_object_file}")")" >> "${summary}"
 printf '    "semantic_bridge_input_mlir": %s,\n' "$(json_string "$(file_sha256 "${bridge_mlir}")")" >> "${summary}"
 printf '    "semantic_bridge_selected_mlir": %s,\n' "$(json_string "$(file_sha256 "${bridge_selected_mlir}")")" >> "${summary}"
-printf '    "semantic_bridge_runtime_mlir": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_mlir}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_mlir}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_llvm_mlir}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_llvm_ir}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_object": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_object}")")" >> "${summary}"
 printf '  }\n' >> "${summary}"
 printf '}\n' >> "${summary}"
 
@@ -623,6 +728,18 @@ if [[ -f "${bridge_selected_mlir}" ]]; then
 fi
 if [[ -f "${bridge_runtime_mlir}" ]]; then
   echo "wrote ${bridge_runtime_mlir}"
+fi
+if [[ -f "${bridge_runtime_llvm_mlir}" ]]; then
+  echo "wrote ${bridge_runtime_llvm_mlir}"
+fi
+if [[ -f "${bridge_runtime_llvm_ir}" ]]; then
+  echo "wrote ${bridge_runtime_llvm_ir}"
+fi
+if [[ -f "${bridge_runtime_object}" ]]; then
+  echo "wrote ${bridge_runtime_object}"
+fi
+if [[ -f "${bridge_runtime_symbols}" ]]; then
+  echo "wrote ${bridge_runtime_symbols}"
 fi
 echo "wrote ${summary}"
 
@@ -655,6 +772,26 @@ fi
 if [[ -n "${bridge_runtime_status}" && "${bridge_runtime_status}" -ne 0 ]]; then
   echo "GridKit semantic bridge runtime glue lowering failed; see ${bridge_runtime_log}" >&2
   exit "${bridge_runtime_status}"
+fi
+
+if [[ -n "${bridge_runtime_strip_status}" && "${bridge_runtime_strip_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge runtime glue metadata strip failed; see ${bridge_runtime_strip_log}" >&2
+  exit "${bridge_runtime_strip_status}"
+fi
+
+if [[ -n "${bridge_runtime_translate_status}" && "${bridge_runtime_translate_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge runtime glue LLVM translation failed; see ${bridge_runtime_translate_log}" >&2
+  exit "${bridge_runtime_translate_status}"
+fi
+
+if [[ -n "${bridge_runtime_object_status}" && "${bridge_runtime_object_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge runtime glue object generation failed; see ${bridge_runtime_object_log}" >&2
+  exit "${bridge_runtime_object_status}"
+fi
+
+if [[ -n "${bridge_runtime_symbols_status}" && "${bridge_runtime_symbols_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge runtime glue symbol extraction failed; see ${bridge_runtime_object_log}" >&2
+  exit "${bridge_runtime_symbols_status}"
 fi
 
 if [[ -n "${default_status}" && "${default_status}" -ne 0 ]]; then
