@@ -5,6 +5,11 @@
 #include <GridKit/Solver/Dynamic/Ida.hpp>
 #include <GridKit/Solver/Dynamic/IdaJvpRuntime.hpp>
 
+namespace
+{
+  long explicit_jacobian_calls = 0;
+}
+
 namespace GridKit
 {
   namespace PhasorDynamics
@@ -12,13 +17,15 @@ namespace GridKit
     template <typename scalar_type, typename index_type>
     int Bus<scalar_type, index_type>::evaluateJacobian()
     {
-      return 0;
+      ++explicit_jacobian_calls;
+      return 1;
     }
 
     template <typename scalar_type, typename index_type>
     int GenClassical<scalar_type, index_type>::evaluateJacobian()
     {
-      return 0;
+      ++explicit_jacobian_calls;
+      return 1;
     }
   } // namespace PhasorDynamics
 } // namespace GridKit
@@ -58,6 +65,16 @@ int main()
     std::cerr << "configureSimulation failed\n";
     return 1;
   }
+  if (!ida.generatedJvpConfigured())
+  {
+    std::cerr << "generated IDA JVP path was not configured\n";
+    return 1;
+  }
+
+  gen.setPmech(0.82);
+  bus.Vr() += 1.0e-3;
+  bus.Vi() -= 5.0e-4;
+
   if (ida.initializeSimulation(0.0) != 0)
   {
     std::cerr << "initializeSimulation failed\n";
@@ -69,6 +86,38 @@ int main()
     return 1;
   }
 
-  std::cout << "generated real SUNDIALS component smoke: ok\n";
+  const auto ida_stats = ida.getStats();
+  const auto lin_stats = ida.getLinearSolverStats();
+  if (explicit_jacobian_calls != 0)
+  {
+    std::cerr << "legacy explicit Jacobian path was invoked "
+              << explicit_jacobian_calls << " time(s)\n";
+    return 1;
+  }
+  if (lin_stats.num_jacobian_evals_ != 0)
+  {
+    std::cerr << "SUNDIALS reported explicit Jacobian evaluations: "
+              << lin_stats.num_jacobian_evals_ << '\n';
+    return 1;
+  }
+  if (lin_stats.num_jac_times_evals_ <= 0)
+  {
+    std::cerr << "SUNDIALS did not report any JacTimes evaluations\n";
+    return 1;
+  }
+  if (lin_stats.num_linear_iters_ <= 0)
+  {
+    std::cerr << "SUNDIALS did not report iterative linear solves\n";
+    return 1;
+  }
+
+  std::cout << "generated real SUNDIALS component smoke: ok"
+            << " steps=" << ida_stats.num_steps_
+            << " residual_evals=" << ida_stats.num_residual_evals_
+            << " nonlinear_iters=" << ida_stats.num_nonlinear_iters_
+            << " linear_iters=" << lin_stats.num_linear_iters_
+            << " jac_times_evals=" << lin_stats.num_jac_times_evals_
+            << " explicit_jacobian_evals=" << lin_stats.num_jacobian_evals_
+            << '\n';
   return 0;
 }

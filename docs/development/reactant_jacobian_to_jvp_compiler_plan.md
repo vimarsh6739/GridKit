@@ -107,6 +107,10 @@ GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_imported.m
 GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_roundtrip_input.mlir
 GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_marked_sparse_jacobian.mlir
 GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_roundtrip.o
+GridKit/build/reactant-jacobian-export/reactant/systemmodel_genclassical_reactant_imported.mlir
+GridKit/build/reactant-jacobian-export/reactant/systemmodel_genclassical_reactant_roundtrip_input.mlir
+GridKit/build/reactant-jacobian-export/reactant/systemmodel_genclassical_reactant_marked_sparse_jacobian.mlir
+GridKit/build/reactant-jacobian-export/reactant/systemmodel_genclassical_reactant_roundtrip.o
 GridKit/build/reactant-jacobian-export/reactant/gridkit_ida_host_reactant_imported.mlir
 GridKit/build/reactant-jacobian-export/reactant/gridkit_ida_host_reactant_roundtrip_input.mlir
 GridKit/build/reactant-jacobian-export/reactant/gridkit_ida_host_recovered_sundials.mlir
@@ -114,24 +118,58 @@ GridKit/build/reactant-jacobian-export/reactant/gridkit_ida_host_reactant_roundt
 GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_matrix_free_input.mlir
 GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_matrix_free_selected.mlir
 GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue.mlir
+GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue.o
+GridKit/build/reactant-jacobian-export/reactant/gridkit_generated_ida_jvp_derivative.cpp
+GridKit/build/reactant-jacobian-export/reactant/gridkit_generated_ida_jvp_derivative.o
+GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke
+GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke.log
+GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue_real_sundials_component
+GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue_real_sundials_component.log
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_derivative.cpp
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_derivative.o
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_smoke
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_smoke.log
 GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_import_export.json
 ```
 
 With `GRIDKIT_REACTANT_TRY_DEFAULT=1`, the same script also probes the default
 Reactant pipeline and records its exit status and log in the JSON summary. The
-same export also raises a declaration-only IDA host harness that includes
-GridKit's existing `Ida.cpp` configuration path. The SUNDIALS shim headers used
-there are compile/import declarations only; SUNDIALS remains an external runtime
-boundary and no SUNDIALS implementation is imported. The current full GridKit
-harness status is:
+same export also raises:
+
+- `SystemModelGenClassicalSparseJacobianHarness.cpp`, a one-bus/one-generator
+  `SystemModel` source region that still calls the existing
+  `SystemModel::evaluateJacobian()` sparse assembly path.
+- A declaration-only IDA host harness that includes GridKit's existing
+  `Ida.cpp` configuration path.
+
+The SUNDIALS shim headers used there are compile/import declarations only;
+SUNDIALS remains an external runtime boundary and no SUNDIALS implementation is
+imported. The current full GridKit harness status is:
 
 ```text
 roundtrip.exit_code = 0
 marker.exit_code = 0
+systemmodel.roundtrip_exit_code = 0
+systemmodel.marker_exit_code = 0
 ida_host.roundtrip_exit_code = 0
 ida_host.marker_exit_code = 0
 semantic_bridge.runtime_exit_code = 0
-default_pipeline.exit_code = 139
+semantic_bridge.runtime_real_smoke_compile_exit_code = 0
+semantic_bridge.runtime_real_smoke_run_exit_code = 0
+semantic_bridge.runtime_real_sundials_component_compile_exit_code = 0
+semantic_bridge.runtime_real_sundials_component_run_exit_code = 0
+systemmodel_generated_jvp.derivative_compile_exit_code = 0
+systemmodel_generated_jvp.smoke_compile_exit_code = 0
+systemmodel_generated_jvp.smoke_run_exit_code = 0
+default_pipeline.exit_code = null
+line_counts.systemmodel_imported_mlir = 52975
+line_counts.systemmodel_marked_mlir = 52992
+line_counts.systemmodel_generated_jvp_derivative_source = 114
+line_counts.systemmodel_generated_jvp_smoke_harness = 251
+matching_lines.gridkit_systemmodel_genclassical_existing_sparse_jacobian = 1
+matching_lines.systemmodel___enzyme_fwddiff = 14
+matching_lines.systemmodel_sparse_store = 10
+matching_lines.systemmodel_evaluateJacobian = 16
 marked_attributes.semantic_jacobian_materializations = 8
 marked_attributes.semantic_jacobian_materializations_with_residual = 8
 marked_attributes.semantic_jacobian_materializations_with_activity = 8
@@ -144,6 +182,14 @@ marked_attributes.semantic_jacobian_actions = 8
 marked_attributes.semantic_jacobian_actions_with_materialization = 8
 marked_attributes.semantic_jacobian_actions_with_sparse_layout = 8
 marked_attributes.semantic_jacobian_actions_synthesized_attr = 1
+marked_attributes.systemmodel_semantic_jacobian_materializations = 8
+marked_attributes.systemmodel_semantic_jacobian_materializations_with_residual = 8
+marked_attributes.systemmodel_semantic_jacobian_materializations_with_sparse_layout = 8
+marked_attributes.systemmodel_semantic_jacobian_actions = 8
+marked_attributes.systemmodel_semantic_jacobian_actions_with_materialization = 8
+marked_attributes.systemmodel_semantic_jacobian_actions_synthesized_attr = 1
+marked_attributes.systemmodel_marked_sparse_helpers_attr = 1
+marked_attributes.systemmodel_materialized_helpers = 8
 marked_attributes.sundials_ida_matrix_free_selected_attr = 0
 marked_attributes.semantic_sundials_ida_solves = 0
 marked_attributes.semantic_sundials_ida_solves_recovered_attr = 0
@@ -247,7 +293,29 @@ marked_attributes.semantic_bridge_runtime_user_data_declarations = 1
 marked_attributes.semantic_bridge_runtime_callback_context_attrs = 2
 marked_attributes.semantic_bridge_ida_set_jac_times_calls = 1
 marked_attributes.semantic_bridge_iterative_solver_calls = 1
+marked_attributes.semantic_bridge_runtime_real_smoke_finite_difference_success_lines = 1
+marked_attributes.semantic_bridge_runtime_real_smoke_matrix_free_success_lines = 1
+marked_attributes.semantic_bridge_runtime_real_smoke_explicit_csr_success_lines = 1
+marked_attributes.semantic_bridge_runtime_real_sundials_component_success_lines = 1
+marked_attributes.systemmodel_generated_jvp_smoke_success_lines = 1
+marked_attributes.systemmodel_generated_jvp_finite_difference_success_lines = 1
+marked_attributes.systemmodel_generated_jvp_explicit_sparse_success_lines = 1
+marked_attributes.systemmodel_generated_jvp_matrix_free_success_lines = 1
 ```
+
+The generated runtime checks now report:
+
+```text
+generated real JVP smoke: ok finite_difference=ok matrix_free_oracle=ok explicit_csr_oracle=ok
+generated real SUNDIALS component smoke: ok steps=14 residual_evals=19 nonlinear_iters=17 linear_iters=37 jac_times_evals=37 explicit_jacobian_evals=0
+systemmodel generated JVP smoke: ok finite_difference=ok explicit_sparse_oracle=ok matrix_free_oracle=ok
+```
+
+The `systemmodel generated JVP` line is an aggregate one-bus/one-generator
+SystemModel-layout check over global `y`/`yp` vectors. It validates the
+generated JVP against the `SystemModel` primal residual layout, finite
+differences, explicit sparse `J*v`, and the MatrixFree oracle. It is not yet the
+full generated-JVP `SystemModel` IDA simulation.
 
 The marker and action-synthesis passes currently record:
 
@@ -471,10 +539,17 @@ ABI resolver `__enzymexla_sundials_ida_resolve_generated_jvp_input` consults
 that resolver before falling back to the optional weak host extension. The setup
 helper underneath the dispatcher now derives the output size from the IDA `yy`
 template via `N_VGetLength`, so host splicing no longer has to supply that
-operand. The remaining executable gaps are linking the generated runtime-glue
-object into a GridKit IDA executable, replacing the script-injected semantic
-bridge with in-compiler recovery across the actual source boundary, and running
-the complete generated-JVP IDA simulation. If those preconditions fail, the
+operand. The export now links the generated runtime-glue object into both a
+standalone generated-JVP smoke and a real SUNDIALS component-level
+`GenClassical` IDA executable; the latter reports JacTimes activity and zero
+explicit Jacobian evaluations. It also builds a generated aggregate
+SystemModel-layout JVP over global `y`/`yp` vectors and checks that action
+against `SystemModel::evaluateResidual()`, finite differences, explicit sparse
+`J*v`, and the MatrixFree oracle. The remaining executable gaps are replacing
+the script-injected semantic bridge with in-compiler recovery across the actual
+source boundary, splicing the SystemModel-layout action into the solver host
+path, and running the complete generated-JVP `SystemModel` IDA simulation. If
+those preconditions fail, the
 fallback raw kernel is still marked `semantic_raw_kernel_requires_lowering` and
 returns a nonzero status. Multiple provenance-matching raw kernels are rejected rather
 than chosen arbitrarily.
@@ -809,12 +884,15 @@ repeatable artifact path and records the default-pipeline crash separately.
 
 1. Replace the remaining script-injected semantic solve bridge with an
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
-   the synthesized Jacobian action records, or raise both source regions in one
-   artifact so no overlay is needed.
-2. Replace the export-only runtime-glue artifact with a generated object that
-   is linked into a GridKit IDA executable for the selected source region.
-3. Run a full GridKit IDA simulation through the generated JVP path without
-   requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
+   the synthesized Jacobian action records. The current export proves both the
+   `SystemModel::evaluateJacobian()` source region raise/mark path and a
+   generated aggregate SystemModel-layout JVP, but the compiler bridge still
+   needs to produce that action from the recovered source boundary.
+2. Replace the export-only runtime-glue and SystemModel-layout derivative
+   artifacts with a generated object that is linked into a GridKit IDA
+   executable for the selected SystemModel source region.
+3. Run a full GridKit SystemModel IDA simulation through the generated JVP path
+   without requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
 4. Either narrow the Reactant default pipeline around this source region or fix
    the `ReactantNewPM` crash so the marked GridKit path can rejoin the normal
    raising pipeline.

@@ -8,6 +8,7 @@
 
 #include <nvector/nvector_serial.h>
 #include <sundials/sundials_context.h>
+#include <idas/idas_ls.h>
 #include <sunlinsol/sunlinsol_dense.h>  /* access to dense linear solver        */
 #include <sunmatrix/sunmatrix_sparse.h> /* access to sparse SUNMatrix           */
 
@@ -38,6 +39,18 @@ namespace AnalysisManager
 
       IdaStats&   operator+=(const IdaStats& other);
       std::string report() const;
+    };
+
+    struct IdaLinearSolverStats
+    {
+      long int num_jacobian_evals_         = 0;
+      long int num_preconditioner_evals_   = 0;
+      long int num_preconditioner_solves_  = 0;
+      long int num_linear_iters_           = 0;
+      long int num_linear_conv_fails_      = 0;
+      long int num_jac_times_setup_evals_  = 0;
+      long int num_jac_times_evals_        = 0;
+      long int num_linear_residual_evals_  = 0;
     };
 
     template <class ScalarT, typename IdxT>
@@ -146,6 +159,33 @@ namespace AnalysisManager
       void setBackwardMaxSteps(IdxT maxSteps);
 
       IdaStats getStats() const;
+
+      bool generatedJvpConfigured() const
+      {
+        return generatedJvpConfigured_;
+      }
+
+      IdaLinearSolverStats getLinearSolverStats() const
+      {
+        IdaLinearSolverStats stats;
+        int retval = IDAGetNumJacEvals(solver_, &stats.num_jacobian_evals_);
+        checkOutput(retval, "IDAGetNumJacEvals");
+        retval = IDAGetNumPrecEvals(solver_, &stats.num_preconditioner_evals_);
+        checkOutput(retval, "IDAGetNumPrecEvals");
+        retval = IDAGetNumPrecSolves(solver_, &stats.num_preconditioner_solves_);
+        checkOutput(retval, "IDAGetNumPrecSolves");
+        retval = IDAGetNumLinIters(solver_, &stats.num_linear_iters_);
+        checkOutput(retval, "IDAGetNumLinIters");
+        retval = IDAGetNumLinConvFails(solver_, &stats.num_linear_conv_fails_);
+        checkOutput(retval, "IDAGetNumLinConvFails");
+        retval = IDAGetNumJTSetupEvals(solver_, &stats.num_jac_times_setup_evals_);
+        checkOutput(retval, "IDAGetNumJTSetupEvals");
+        retval = IDAGetNumJtimesEvals(solver_, &stats.num_jac_times_evals_);
+        checkOutput(retval, "IDAGetNumJtimesEvals");
+        retval = IDAGetNumLinResEvals(solver_, &stats.num_linear_residual_evals_);
+        checkOutput(retval, "IDAGetNumLinResEvals");
+        return stats;
+      }
 
     private:
       static int Residual(RealT    t,

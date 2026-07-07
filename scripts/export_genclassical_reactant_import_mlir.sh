@@ -7,10 +7,12 @@ workspace_root="$(cd "${gridkit_root}/.." && pwd)"
 
 out_dir="${1:-${gridkit_root}/build/reactant-jacobian-export/reactant}"
 src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GenClassicalSparseJacobianHarness.cpp"
+system_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/SystemModelGenClassicalSparseJacobianHarness.cpp"
 ida_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GridKitIdaSparseHostHarness.cpp"
 runtime_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRuntimeGlueSmokeHarness.cpp"
 runtime_real_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRealJvpSmokeHarness.cpp"
 runtime_real_sundials_component_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRealSundialsComponentHarness.cpp"
+system_layout_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/SystemModelGeneratedJvpSmokeHarness.cpp"
 
 reactant_root="${REACTANT_ROOT:-${workspace_root}/Reactant/enzyme}"
 reactant_cxx="${REACTANT_CXX:-${reactant_root}/bazel-bin/reactant-clang++}"
@@ -25,6 +27,7 @@ derivative_resource_dir="${GRIDKIT_REACTANT_ENZYME_RESOURCE_DIR:-}"
 resource_dir="${REACTANT_RESOURCE_DIR:-}"
 gridkit_build_include="${GRIDKIT_REACTANT_GRIDKIT_BUILD_INCLUDE:-${gridkit_root}/build/gridkit-enzyme-jvp-wrapper}"
 sparse_matrix_lib="${GRIDKIT_REACTANT_SPARSE_MATRIX_LIB:-${gridkit_build_include}/GridKit/LinearAlgebra/SparseMatrix/libgridkit_sparse_matrix.so}"
+logger_lib="${GRIDKIT_REACTANT_LOGGER_LIB:-${gridkit_build_include}/GridKit/Utilities/Logger/libgridkit_utilities_logger.so}"
 sundials_gridkit_build="${GRIDKIT_REACTANT_SUNDIALS_GRIDKIT_BUILD:-${gridkit_root}/build/gridkit-sundials-local}"
 sundials_install="${GRIDKIT_REACTANT_SUNDIALS_INSTALL:-${gridkit_root}/build/deps/sundials-install}"
 sundials_solvers_lib="${GRIDKIT_REACTANT_SUNDIALS_SOLVERS_LIB:-${sundials_gridkit_build}/GridKit/Solver/Dynamic/libgridkit_solvers_dyn.so}"
@@ -46,6 +49,13 @@ llvm_nm_tool="${LLVM_NM:-$(command -v llvm-nm || true)}"
 llvm_objcopy_tool="${LLVM_OBJCOPY:-$(command -v llvm-objcopy || true)}"
 marked_mlir="${out_dir}/genclassical_reactant_marked_sparse_jacobian.mlir"
 marker_log="${out_dir}/genclassical_reactant_marker.log"
+
+system_imported_mlir="${out_dir}/systemmodel_genclassical_reactant_imported.mlir"
+system_printed_mlir="${out_dir}/systemmodel_genclassical_reactant_roundtrip_input.mlir"
+system_object_file="${out_dir}/systemmodel_genclassical_reactant_roundtrip.o"
+system_roundtrip_log="${out_dir}/systemmodel_genclassical_reactant_roundtrip.log"
+system_marked_mlir="${out_dir}/systemmodel_genclassical_reactant_marked_sparse_jacobian.mlir"
+system_marker_log="${out_dir}/systemmodel_genclassical_reactant_marker.log"
 
 ida_imported_mlir="${out_dir}/gridkit_ida_host_reactant_imported.mlir"
 ida_printed_mlir="${out_dir}/gridkit_ida_host_reactant_roundtrip_input.mlir"
@@ -77,6 +87,11 @@ bridge_runtime_real_smoke_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_r
 bridge_runtime_real_smoke_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke.log"
 bridge_runtime_real_sundials_component_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_sundials_component"
 bridge_runtime_real_sundials_component_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_sundials_component.log"
+system_layout_derivative_src="${out_dir}/gridkit_systemmodel_layout_jvp_derivative.cpp"
+system_layout_derivative_object="${out_dir}/gridkit_systemmodel_layout_jvp_derivative.o"
+system_layout_derivative_compile_log="${out_dir}/gridkit_systemmodel_layout_jvp_derivative_compile.log"
+system_layout_smoke_exe="${out_dir}/gridkit_systemmodel_layout_jvp_smoke"
+system_layout_smoke_log="${out_dir}/gridkit_systemmodel_layout_jvp_smoke.log"
 
 default_imported_mlir="${out_dir}/genclassical_reactant_default_imported.mlir"
 default_object_file="${out_dir}/genclassical_reactant_default.o"
@@ -250,6 +265,47 @@ if [[ "${run_marker}" == "1" && -x "${enzymexlamlir_opt}" &&
   set -e
 fi
 
+system_attempted="false"
+system_skipped_reason=""
+system_roundtrip_status=""
+system_marker_attempted="false"
+system_marker_status=""
+system_roundtrip_pipeline="print{filename=${system_printed_mlir}}"
+if [[ ! -f "${system_src}" ]]; then
+  system_skipped_reason="SystemModel GenClassical sparse Jacobian harness not found"
+elif [[ ! -f "${gridkit_build_include}/GridKit/Definitions.hpp" ]]; then
+  system_skipped_reason="GridKit generated Definitions.hpp not found under GRIDKIT_REACTANT_GRIDKIT_BUILD_INCLUDE"
+else
+  system_attempted="true"
+  system_reactant_args=(
+    "${common_reactant_args[@]}"
+    -I"${gridkit_build_include}"
+    -c "${system_src}"
+  )
+
+  set +e
+  (
+    export OVERRIDE_PASS_PIPELINE="${system_roundtrip_pipeline}"
+    export DEBUG_REACTANT_IMPORTED_MLIR_MOD_PATH="${system_imported_mlir}"
+    exec "${reactant_cxx}" "${system_reactant_args[@]}" -o "${system_object_file}"
+  ) > "${system_roundtrip_log}" 2>&1
+  system_roundtrip_status=$?
+  set -e
+
+  if [[ "${system_roundtrip_status}" -eq 0 && -x "${enzymexlamlir_opt}" &&
+        -f "${system_printed_mlir}" ]]; then
+    system_marker_attempted="true"
+    set +e
+    "${enzymexlamlir_opt}" --recover-sundials-ida-llvm \
+      --mark-gridkit-sparse-jacobian-llvm \
+      --synthesize-sundials-ida-jacobian-actions \
+      --select-sundials-ida-matrix-free \
+      "${system_printed_mlir}" > "${system_marked_mlir}" 2> "${system_marker_log}"
+    system_marker_status=$?
+    set -e
+  fi
+fi
+
 ida_attempted="false"
 ida_skipped_reason=""
 ida_roundtrip_status=""
@@ -323,6 +379,13 @@ bridge_runtime_real_sundials_component_attempted="false"
 bridge_runtime_real_sundials_component_skipped_reason=""
 bridge_runtime_real_sundials_component_compile_status=""
 bridge_runtime_real_sundials_component_run_status=""
+system_layout_derivative_attempted="false"
+system_layout_derivative_skipped_reason=""
+system_layout_derivative_compile_status=""
+system_layout_smoke_attempted="false"
+system_layout_smoke_skipped_reason=""
+system_layout_smoke_compile_status=""
+system_layout_smoke_run_status=""
 if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
       -f "${ida_marked_mlir}" ]]; then
   materialization_line="$(first_matching_regex "enzymexla\\.jacobian_materialization .*source = \"DfDy\"" "${marked_mlir}")"
@@ -476,8 +539,14 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
                 bridge_runtime_real_smoke_skipped_reason="GridKit sparse matrix library not found; set GRIDKIT_REACTANT_SPARSE_MATRIX_LIB"
               else
                 cat > "${bridge_generated_derivative_src}" <<'DERIVATIVE_EOF'
+#include <algorithm>
+#include <cstddef>
+#include <vector>
+
 #include <GridKit/AutomaticDifferentiation/Enzyme/EnzymeDefinitions.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/MatrixFreeJvp.hpp>
 #include <GridKit/AutomaticDifferentiation/Enzyme/ModelWrappers.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/SparseJacobians.hpp>
 #include <GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassicalImpl.hpp>
 
 namespace
@@ -520,6 +589,76 @@ extern "C" void gridkitGeneratedIdaDerivativeFwddiffYp(
       enzyme_const, model, enzyme_const, y, enzyme_dup, yp, yp_tangent,
       enzyme_const, wb, enzyme_dupnoneed, residual_primal, residual_tangent);
 }
+
+extern "C" void gridkitGeneratedIdaMatrixFreeInternalJvp(
+    GenClassicalLong*, double*, double*, double*, double*, double*, double*,
+    double*);
+
+extern "C" void gridkitGeneratedIdaMatrixFreeInternalJvp(
+    GenClassicalLong* model, double* y, double* y_tangent, double* yp,
+    double* yp_tangent, double* wb, double* wb_tangent,
+    double* residual_tangent)
+{
+  GridKit::Enzyme::MatrixFree::ResidualJvp<GenClassicalLong,
+                                           internalResidual>::eval(
+      model, static_cast<size_t>(model->size()), y, y_tangent, yp,
+      yp_tangent, wb, wb_tangent, residual_tangent);
+}
+
+extern "C" void gridkitGeneratedIdaExplicitSparseInternalJvp(
+    GenClassicalLong*, double*, double*, double*, const long*, double, double*,
+    double*);
+
+extern "C" void gridkitGeneratedIdaExplicitSparseInternalJvp(
+    GenClassicalLong* model, double* y, double* yp, double* wb,
+    const long* bus_variable_indices, double cj, double* global_seed,
+    double* result)
+{
+  using GridKit::Enzyme::Sparse::DfDwb;
+  using GridKit::Enzyme::Sparse::DfDy;
+  using GridKit::Enzyme::Sparse::DfDyp;
+
+  const size_t n_res = static_cast<size_t>(model->size());
+  const size_t n_y   = static_cast<size_t>(model->size());
+  const size_t n_bus = 2;
+
+  std::fill(result, result + n_res, 0.0);
+
+  const size_t buffer_size = 2 * n_y * n_y + 2 * n_y * n_bus;
+  std::vector<long>   rows(buffer_size);
+  std::vector<long>   cols(buffer_size);
+  std::vector<double> vals(buffer_size);
+  long                nnz = 0;
+
+  const auto* residual_indices = model->getResidualIndices().data();
+  const auto* variable_indices = model->getVariableIndices().data();
+
+  DfDy<GenClassicalLong, internalResidual>::eval(model, n_res, n_y,
+                                                 residual_indices,
+                                                 variable_indices, y, yp, wb,
+                                                 rows.data(), cols.data(),
+                                                 vals.data(), nnz);
+  DfDyp<GenClassicalLong, internalResidual>::eval(model, n_res, n_y,
+                                                  residual_indices,
+                                                  variable_indices, y, yp, wb,
+                                                  cj, rows.data(), cols.data(),
+                                                  vals.data(), nnz);
+  DfDwb<GenClassicalLong, internalResidual>::eval(model, n_res, n_bus,
+                                                  residual_indices,
+                                                  bus_variable_indices, y, yp,
+                                                  wb, rows.data(), cols.data(),
+                                                  vals.data(), nnz);
+
+  for (long entry = 0; entry < nnz; ++entry)
+  {
+    const auto row = static_cast<size_t>(rows[static_cast<size_t>(entry)]);
+    const auto col = static_cast<size_t>(cols[static_cast<size_t>(entry)]);
+    if (row < n_res)
+    {
+      result[row] += vals[static_cast<size_t>(entry)] * global_seed[col];
+    }
+  }
+}
 DERIVATIVE_EOF
 
                 bridge_generated_derivative_attempted="true"
@@ -560,8 +699,8 @@ DERIVATIVE_EOF
                     -I"${gridkit_root}/third-party/magic-enum/include" \
                     "${runtime_real_smoke_src}" \
                     "${gridkit_root}/GridKit/Solver/Dynamic/IdaJvpRuntime.cpp" \
-                    "${bridge_runtime_object}" \
                     "${bridge_generated_derivative_object}" \
+                    "${bridge_runtime_object}" \
                     "${sparse_matrix_lib}" \
                     -Wl,--gc-sections \
                     -Wl,-rpath,"${sparse_matrix_lib_dir}" \
@@ -612,8 +751,8 @@ DERIVATIVE_EOF
                       -I"${sundials_install}/include" \
                       -I"${suitesparse_include}" \
                       "${runtime_real_sundials_component_src}" \
-                      "${bridge_runtime_object}" \
                       "${bridge_generated_derivative_object}" \
+                      "${bridge_runtime_object}" \
                       "${sundials_solvers_lib}" \
                       "${sundials_sparse_matrix_lib}" \
                       "${sundials_install}/lib/libsundials_idas.so" \
@@ -655,6 +794,188 @@ DERIVATIVE_EOF
   fi
 fi
 
+if [[ ! -f "${system_layout_smoke_src}" ]]; then
+  system_layout_derivative_skipped_reason="SystemModel-layout generated JVP smoke harness not found"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+elif [[ -z "${runtime_smoke_cxx}" || ! -x "${runtime_smoke_cxx}" ]]; then
+  system_layout_derivative_skipped_reason="C++ compiler not found; set GRIDKIT_REACTANT_RUNTIME_SMOKE_CXX or CXX"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+elif [[ -z "${derivative_enzyme_cxx}" || ! -x "${derivative_enzyme_cxx}" ]]; then
+  system_layout_derivative_skipped_reason="Enzyme C++ compiler not found; set GRIDKIT_REACTANT_ENZYME_CXX"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+elif [[ -z "${derivative_resource_dir}" ||
+        ! -f "${derivative_resource_dir}/include/stddef.h" ]]; then
+  system_layout_derivative_skipped_reason="Enzyme clang resource dir not found; set GRIDKIT_REACTANT_ENZYME_RESOURCE_DIR"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+elif [[ ! -f "${sparse_matrix_lib}" ]]; then
+  system_layout_derivative_skipped_reason="GridKit sparse matrix library not found; set GRIDKIT_REACTANT_SPARSE_MATRIX_LIB"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+elif [[ ! -f "${logger_lib}" ]]; then
+  system_layout_derivative_skipped_reason="GridKit logger library not found; set GRIDKIT_REACTANT_LOGGER_LIB"
+  system_layout_smoke_skipped_reason="${system_layout_derivative_skipped_reason}"
+else
+  cat > "${system_layout_derivative_src}" <<'SYSTEM_LAYOUT_DERIVATIVE_EOF'
+#include <algorithm>
+#include <cstddef>
+#include <vector>
+
+#include <GridKit/AutomaticDifferentiation/Enzyme/EnzymeDefinitions.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/MatrixFreeJvp.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/ModelWrappers.hpp>
+#include <GridKit/AutomaticDifferentiation/Enzyme/SparseJacobians.hpp>
+#include <GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassicalImpl.hpp>
+
+namespace
+{
+  using GenClassicalLong = GridKit::PhasorDynamics::GenClassical<double, long>;
+  constexpr auto internalResidual =
+      GridKit::Enzyme::Sparse::MemberFunctions::InternalResidual;
+  constexpr auto busResidual =
+      GridKit::Enzyme::Sparse::MemberFunctions::BusResidual;
+
+  void systemModelLayoutResidual(GenClassicalLong* model,
+                                 const double*     y,
+                                 const double*     yp,
+                                 double*           residual)
+  {
+    residual[0] = 0.0;
+    residual[1] = 0.0;
+    model->evaluateBusResidual(y + 2, yp + 2, y, residual);
+    model->evaluateInternalResidual(y + 2, yp + 2, y, residual + 2);
+  }
+} // namespace
+
+extern "C" void gridkitGeneratedSystemModelLayoutJvp(
+    GenClassicalLong*, double*, double*, double*, double*, double*);
+
+extern "C" void gridkitGeneratedSystemModelLayoutJvp(
+    GenClassicalLong* model, double* y, double* y_tangent, double* yp,
+    double* yp_tangent, double* residual_tangent)
+{
+  std::vector<double> residual_primal(7);
+  std::fill(residual_tangent, residual_tangent + 7, 0.0);
+  GridKit::Enzyme::Sparse::__enzyme_fwddiff<void>(
+      (void*)systemModelLayoutResidual, enzyme_const, model, enzyme_dup, y,
+      y_tangent, enzyme_dup, yp, yp_tangent, enzyme_dupnoneed,
+      residual_primal.data(), residual_tangent);
+}
+
+extern "C" void gridkitGeneratedSystemModelLayoutExplicitSparseJvp(
+    GenClassicalLong*, const long*, const long*, double*, double*, double,
+    double*, double*);
+
+extern "C" void gridkitGeneratedSystemModelLayoutExplicitSparseJvp(
+    GenClassicalLong* model, const long* internal_residual_indices,
+    const long* internal_variable_indices, double* y, double* yp, double cj,
+    double* global_seed, double* result)
+{
+  using GridKit::Enzyme::Sparse::DfDwb;
+  using GridKit::Enzyme::Sparse::DfDy;
+  using GridKit::Enzyme::Sparse::DfDyp;
+  using GridKit::Enzyme::Sparse::DhDy;
+
+  constexpr size_t n_total = 7;
+  constexpr size_t n_bus   = 2;
+  constexpr size_t n_gen   = 5;
+  constexpr long bus_residual_indices[] = {0, 1};
+  constexpr long bus_variable_indices[] = {0, 1};
+
+  std::fill(result, result + n_total, 0.0);
+
+  std::vector<long>   rows(2 * n_gen * n_gen + n_gen * n_bus + n_bus * n_gen);
+  std::vector<long>   cols(rows.size());
+  std::vector<double> vals(rows.size());
+  long                nnz = 0;
+
+  DfDy<GenClassicalLong, internalResidual>::eval(
+      model, n_gen, n_gen, internal_residual_indices,
+      internal_variable_indices, y + 2, yp + 2, y, rows.data(), cols.data(),
+      vals.data(), nnz);
+  DfDyp<GenClassicalLong, internalResidual>::eval(
+      model, n_gen, n_gen, internal_residual_indices,
+      internal_variable_indices, y + 2, yp + 2, y, cj, rows.data(),
+      cols.data(), vals.data(), nnz);
+  DfDwb<GenClassicalLong, internalResidual>::eval(
+      model, n_gen, n_bus, internal_residual_indices, bus_variable_indices,
+      y + 2, yp + 2, y, rows.data(), cols.data(), vals.data(), nnz);
+  DhDy<GenClassicalLong, busResidual>::eval(
+      model, n_bus, n_gen, bus_residual_indices, internal_variable_indices,
+      y + 2, yp + 2, y, rows.data(), cols.data(), vals.data(), nnz);
+
+  for (long entry = 0; entry < nnz; ++entry)
+  {
+    const auto row = static_cast<size_t>(rows[static_cast<size_t>(entry)]);
+    const auto col = static_cast<size_t>(cols[static_cast<size_t>(entry)]);
+    result[row] += vals[static_cast<size_t>(entry)] * global_seed[col];
+  }
+}
+
+extern "C" void gridkitGeneratedSystemModelLayoutMatrixFreeJvp(
+    GenClassicalLong*, double*, double*, double*, double*, double*);
+
+extern "C" void gridkitGeneratedSystemModelLayoutMatrixFreeJvp(
+    GenClassicalLong* model, double* y, double* y_tangent, double* yp,
+    double* yp_tangent, double* result)
+{
+  std::fill(result, result + 7, 0.0);
+  double wb_seed[2] = {y_tangent[0], y_tangent[1]};
+
+  GridKit::Enzyme::MatrixFree::ResidualJvp<GenClassicalLong,
+                                           internalResidual>::eval(
+      model, 5, y + 2, y_tangent + 2, yp + 2, yp_tangent + 2, y,
+      wb_seed, result + 2);
+  GridKit::Enzyme::MatrixFree::ResidualJvp<GenClassicalLong,
+                                           busResidual>::eval(
+      model, 2, y + 2, y_tangent + 2, yp + 2, yp_tangent + 2, y,
+      wb_seed, result);
+}
+SYSTEM_LAYOUT_DERIVATIVE_EOF
+
+  system_layout_derivative_attempted="true"
+  set +e
+  "${derivative_enzyme_cxx}" \
+    -I"${gridkit_root}/third-party/magic-enum/include" \
+    -I"${gridkit_build_include}" \
+    -I"${gridkit_root}" \
+    -resource-dir "${derivative_resource_dir}" \
+    -std=gnu++20 -O3 -DNDEBUG -fPIC -fno-math-errno \
+    -c "${system_layout_derivative_src}" \
+    -o "${system_layout_derivative_object}" \
+    > "${system_layout_derivative_compile_log}" 2>&1
+  system_layout_derivative_compile_status=$?
+  set -e
+
+  if [[ "${system_layout_derivative_compile_status}" -eq 0 ]]; then
+    system_layout_smoke_attempted="true"
+    sparse_matrix_lib_dir="$(dirname "${sparse_matrix_lib}")"
+    set +e
+    "${runtime_smoke_cxx}" -std=c++20 -O0 -g -pthread \
+      -ffunction-sections -fdata-sections \
+      -I"${gridkit_root}" \
+      -I"${gridkit_build_include}" \
+      -I"${gridkit_root}/third-party/magic-enum/include" \
+      "${system_layout_smoke_src}" \
+      "${system_layout_derivative_object}" \
+      "${sparse_matrix_lib}" \
+      "${logger_lib}" \
+      -Wl,--gc-sections \
+      -Wl,-rpath,"${sparse_matrix_lib_dir}" \
+      -Wl,-rpath,"$(dirname "${logger_lib}")" \
+      -no-pie -lm \
+      -o "${system_layout_smoke_exe}" \
+      > "${system_layout_smoke_log}" 2>&1
+    system_layout_smoke_compile_status=$?
+    set -e
+
+    if [[ "${system_layout_smoke_compile_status}" -eq 0 ]]; then
+      set +e
+      "${system_layout_smoke_exe}" >> "${system_layout_smoke_log}" 2>&1
+      system_layout_smoke_run_status=$?
+      set -e
+    fi
+  fi
+fi
+
 try_default="${GRIDKIT_REACTANT_TRY_DEFAULT:-0}"
 default_status=""
 if [[ "${try_default}" == "1" ]]; then
@@ -673,6 +994,16 @@ if [[ -n "${marker_status}" ]]; then
   marker_exit_json="${marker_status}"
 else
   marker_exit_json="null"
+fi
+if [[ -n "${system_roundtrip_status}" ]]; then
+  system_roundtrip_exit_json="${system_roundtrip_status}"
+else
+  system_roundtrip_exit_json="null"
+fi
+if [[ -n "${system_marker_status}" ]]; then
+  system_marker_exit_json="${system_marker_status}"
+else
+  system_marker_exit_json="null"
 fi
 if [[ -n "${ida_roundtrip_status}" ]]; then
   ida_roundtrip_exit_json="${ida_roundtrip_status}"
@@ -759,6 +1090,21 @@ if [[ -n "${bridge_runtime_real_sundials_component_run_status}" ]]; then
 else
   bridge_runtime_real_sundials_component_run_exit_json="null"
 fi
+if [[ -n "${system_layout_derivative_compile_status}" ]]; then
+  system_layout_derivative_compile_exit_json="${system_layout_derivative_compile_status}"
+else
+  system_layout_derivative_compile_exit_json="null"
+fi
+if [[ -n "${system_layout_smoke_compile_status}" ]]; then
+  system_layout_smoke_compile_exit_json="${system_layout_smoke_compile_status}"
+else
+  system_layout_smoke_compile_exit_json="null"
+fi
+if [[ -n "${system_layout_smoke_run_status}" ]]; then
+  system_layout_smoke_run_exit_json="${system_layout_smoke_run_status}"
+else
+  system_layout_smoke_run_exit_json="null"
+fi
 if [[ -n "${default_status}" ]]; then
   default_exit_json="${default_status}"
 else
@@ -784,6 +1130,23 @@ printf '    "exit_code": %s,\n' "${marker_exit_json}" >> "${summary}"
 printf '    "tool": %s,\n' "$(json_string "${enzymexlamlir_opt}")" >> "${summary}"
 printf '    "marked_mlir": %s,\n' "$(json_string "${marked_mlir}")" >> "${summary}"
 printf '    "log": %s\n' "$(json_string "${marker_log}")" >> "${summary}"
+printf '  },\n' >> "${summary}"
+printf '  "systemmodel": {\n' >> "${summary}"
+printf '    "attempted": %s,\n' "${system_attempted}" >> "${summary}"
+printf '    "skipped_reason": %s,\n' "$(json_string "${system_skipped_reason}")" >> "${summary}"
+printf '    "source": %s,\n' "$(json_string "${system_src}")" >> "${summary}"
+printf '    "gridkit_build_include": %s,\n' "$(json_string "${gridkit_build_include}")" >> "${summary}"
+printf '    "override_pass_pipeline": %s,\n' "$(json_string "${system_roundtrip_pipeline}")" >> "${summary}"
+printf '    "roundtrip_exit_code": %s,\n' "${system_roundtrip_exit_json}" >> "${summary}"
+printf '    "object_created": %s,\n' "$([[ -f "${system_object_file}" ]] && printf true || printf false)" >> "${summary}"
+printf '    "imported_mlir": %s,\n' "$(json_string "${system_imported_mlir}")" >> "${summary}"
+printf '    "printed_mlir": %s,\n' "$(json_string "${system_printed_mlir}")" >> "${summary}"
+printf '    "object": %s,\n' "$(json_string "${system_object_file}")" >> "${summary}"
+printf '    "roundtrip_log": %s,\n' "$(json_string "${system_roundtrip_log}")" >> "${summary}"
+printf '    "marker_attempted": %s,\n' "${system_marker_attempted}" >> "${summary}"
+printf '    "marker_exit_code": %s,\n' "${system_marker_exit_json}" >> "${summary}"
+printf '    "marked_mlir": %s,\n' "$(json_string "${system_marked_mlir}")" >> "${summary}"
+printf '    "marker_log": %s\n' "$(json_string "${system_marker_log}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "ida_host": {\n' >> "${summary}"
 printf '    "attempted": %s,\n' "${ida_attempted}" >> "${summary}"
@@ -875,6 +1238,21 @@ printf '    "generated_derivative_rename_log": %s,\n' "$(json_string "${bridge_g
 printf '    "runtime_real_smoke_log": %s,\n' "$(json_string "${bridge_runtime_real_smoke_log}")" >> "${summary}"
 printf '    "runtime_real_sundials_component_log": %s\n' "$(json_string "${bridge_runtime_real_sundials_component_log}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
+printf '  "systemmodel_generated_jvp": {\n' >> "${summary}"
+printf '    "derivative_attempted": %s,\n' "${system_layout_derivative_attempted}" >> "${summary}"
+printf '    "derivative_skipped_reason": %s,\n' "$(json_string "${system_layout_derivative_skipped_reason}")" >> "${summary}"
+printf '    "derivative_compile_exit_code": %s,\n' "${system_layout_derivative_compile_exit_json}" >> "${summary}"
+printf '    "smoke_attempted": %s,\n' "${system_layout_smoke_attempted}" >> "${summary}"
+printf '    "smoke_skipped_reason": %s,\n' "$(json_string "${system_layout_smoke_skipped_reason}")" >> "${summary}"
+printf '    "smoke_compile_exit_code": %s,\n' "${system_layout_smoke_compile_exit_json}" >> "${summary}"
+printf '    "smoke_run_exit_code": %s,\n' "${system_layout_smoke_run_exit_json}" >> "${summary}"
+printf '    "smoke_harness": %s,\n' "$(json_string "${system_layout_smoke_src}")" >> "${summary}"
+printf '    "derivative_source": %s,\n' "$(json_string "${system_layout_derivative_src}")" >> "${summary}"
+printf '    "derivative_object": %s,\n' "$(json_string "${system_layout_derivative_object}")" >> "${summary}"
+printf '    "derivative_compile_log": %s,\n' "$(json_string "${system_layout_derivative_compile_log}")" >> "${summary}"
+printf '    "smoke_executable": %s,\n' "$(json_string "${system_layout_smoke_exe}")" >> "${summary}"
+printf '    "smoke_log": %s\n' "$(json_string "${system_layout_smoke_log}")" >> "${summary}"
+printf '  },\n' >> "${summary}"
 printf '  "default_pipeline": {\n' >> "${summary}"
 printf '    "attempted": %s,\n' "$([[ "${try_default}" == "1" ]] && printf true || printf false)" >> "${summary}"
 printf '    "exit_code": %s,\n' "${default_exit_json}" >> "${summary}"
@@ -886,6 +1264,9 @@ printf '  "line_counts": {\n' >> "${summary}"
 printf '    "imported_mlir": %s,\n' "$(count_lines "${imported_mlir}")" >> "${summary}"
 printf '    "printed_mlir": %s,\n' "$(count_lines "${printed_mlir}")" >> "${summary}"
 printf '    "marked_mlir": %s,\n' "$(count_lines "${marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_imported_mlir": %s,\n' "$(count_lines "${system_imported_mlir}")" >> "${summary}"
+printf '    "systemmodel_printed_mlir": %s,\n' "$(count_lines "${system_printed_mlir}")" >> "${summary}"
+printf '    "systemmodel_marked_mlir": %s,\n' "$(count_lines "${system_marked_mlir}")" >> "${summary}"
 printf '    "ida_host_imported_mlir": %s,\n' "$(count_lines "${ida_imported_mlir}")" >> "${summary}"
 printf '    "ida_host_printed_mlir": %s,\n' "$(count_lines "${ida_printed_mlir}")" >> "${summary}"
 printf '    "ida_host_marked_mlir": %s,\n' "$(count_lines "${ida_marked_mlir}")" >> "${summary}"
@@ -895,13 +1276,19 @@ printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(count_lines "${bridge_runt
 printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(count_lines "${bridge_runtime_llvm_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(count_lines "${bridge_runtime_llvm_ir}")" >> "${summary}"
 printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(count_lines "${bridge_generated_derivative_src}")" >> "${summary}"
-printf '    "semantic_bridge_real_sundials_component_harness": %s\n' "$(count_lines "${runtime_real_sundials_component_src}")" >> "${summary}"
+printf '    "semantic_bridge_real_sundials_component_harness": %s,\n' "$(count_lines "${runtime_real_sundials_component_src}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_derivative_source": %s,\n' "$(count_lines "${system_layout_derivative_src}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_smoke_harness": %s\n' "$(count_lines "${system_layout_smoke_src}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "matching_lines": {\n' >> "${summary}"
 printf '    "__enzyme_fwddiff": %s,\n' "$(count_matches "__enzyme_fwddiff" "${printed_mlir}")" >> "${summary}"
 printf '    "__enzyme_todense": %s,\n' "$(count_matches "__enzyme_todense" "${printed_mlir}")" >> "${summary}"
 printf '    "sparse_store": %s,\n' "$(count_matches "sparse_store" "${printed_mlir}")" >> "${summary}"
 printf '    "gridkit_genclassical_existing_sparse_jacobian": %s,\n' "$(count_matches "gridkit_genclassical_existing_sparse_jacobian" "${printed_mlir}")" >> "${summary}"
+printf '    "gridkit_systemmodel_genclassical_existing_sparse_jacobian": %s,\n' "$(count_matches "gridkit_systemmodel_genclassical_existing_sparse_jacobian" "${system_printed_mlir}")" >> "${summary}"
+printf '    "systemmodel___enzyme_fwddiff": %s,\n' "$(count_matches "__enzyme_fwddiff" "${system_printed_mlir}")" >> "${summary}"
+printf '    "systemmodel_sparse_store": %s,\n' "$(count_matches "sparse_store" "${system_printed_mlir}")" >> "${summary}"
+printf '    "systemmodel_evaluateJacobian": %s,\n' "$(count_matches "evaluateJacobian" "${system_printed_mlir}")" >> "${summary}"
 printf '    "DfDy": %s,\n' "$(count_matches "DfDy" "${printed_mlir}")" >> "${summary}"
 printf '    "DfDyp": %s,\n' "$(count_matches "DfDyp" "${printed_mlir}")" >> "${summary}"
 printf '    "DfDwb": %s,\n' "$(count_matches "DfDwb" "${printed_mlir}")" >> "${summary}"
@@ -925,6 +1312,14 @@ printf '    "semantic_jacobian_actions": %s,\n' "$(count_regex "enzymexla\\.jaco
 printf '    "semantic_jacobian_actions_with_materialization": %s,\n' "$(count_regex "enzymexla\\.jacobian_action .*materialization = @" "${marked_mlir}")" >> "${summary}"
 printf '    "semantic_jacobian_actions_with_sparse_layout": %s,\n' "$(count_regex "enzymexla\\.jacobian_action .*sparse_assembly =" "${marked_mlir}")" >> "${summary}"
 printf '    "semantic_jacobian_actions_synthesized_attr": %s,\n' "$(count_matches "enzymexla.jacobian_actions_synthesized" "${marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_materializations": %s,\n' "$(count_matches "enzymexla.jacobian_materialization" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_materializations_with_residual": %s,\n' "$(count_regex "enzymexla\\.jacobian_materialization .* residual = @" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_materializations_with_sparse_layout": %s,\n' "$(count_regex "enzymexla\\.jacobian_materialization .*sparse_assembly =" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_actions": %s,\n' "$(count_regex "enzymexla\\.jacobian_action " "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_actions_with_materialization": %s,\n' "$(count_regex "enzymexla\\.jacobian_action .*materialization = @" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_semantic_jacobian_actions_synthesized_attr": %s,\n' "$(count_matches "enzymexla.jacobian_actions_synthesized" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_marked_sparse_helpers_attr": %s,\n' "$(count_matches "gridkit.jacobian.marked_sparse_helpers" "${system_marked_mlir}")" >> "${summary}"
+printf '    "systemmodel_materialized_helpers": %s,\n' "$(count_matches "gridkit.jacobian.materialization" "${system_marked_mlir}")" >> "${summary}"
 printf '    "sundials_ida_matrix_free_selected_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_matrix_free_selected" "${marked_mlir}")" >> "${summary}"
 printf '    "semantic_sundials_ida_solves": %s,\n' "$(count_regex "enzymexla\\.sundials\\.ida_solve[[:space:]]" "${marked_mlir}")" >> "${summary}"
 printf '    "semantic_sundials_ida_solves_recovered_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_solves_recovered" "${marked_mlir}")" >> "${summary}"
@@ -1023,7 +1418,14 @@ printf '    "semantic_bridge_runtime_object_jactimes_symbols": %s,\n' "$(count_m
 printf '    "semantic_bridge_runtime_object_raw_jvp_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_raw_jvp_kernel_" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_smoke_success_lines": %s,\n' "$(count_matches "generated runtime glue smoke: ok" "${bridge_runtime_smoke_log}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_real_smoke_success_lines": %s,\n' "$(count_matches "generated real JVP smoke: ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_finite_difference_success_lines": %s,\n' "$(count_matches "finite_difference=ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_matrix_free_success_lines": %s,\n' "$(count_matches "matrix_free_oracle=ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_explicit_csr_success_lines": %s,\n' "$(count_matches "explicit_csr_oracle=ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_real_sundials_component_success_lines": %s,\n' "$(count_matches "generated real SUNDIALS component smoke: ok" "${bridge_runtime_real_sundials_component_log}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_smoke_success_lines": %s,\n' "$(count_matches "systemmodel generated JVP smoke: ok" "${system_layout_smoke_log}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_finite_difference_success_lines": %s,\n' "$(count_matches "finite_difference=ok" "${system_layout_smoke_log}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_explicit_sparse_success_lines": %s,\n' "$(count_matches "explicit_sparse_oracle=ok" "${system_layout_smoke_log}")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_matrix_free_success_lines": %s,\n' "$(count_matches "matrix_free_oracle=ok" "${system_layout_smoke_log}")" >> "${summary}"
 printf '    "gridkit_runtime_evaluator_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/Evaluator.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_component_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/Component.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_genclassical_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassical.hpp")" >> "${summary}"
@@ -1068,6 +1470,10 @@ printf '    "imported_mlir": %s,\n' "$(json_string "$(file_sha256 "${imported_ml
 printf '    "printed_mlir": %s,\n' "$(json_string "$(file_sha256 "${printed_mlir}")")" >> "${summary}"
 printf '    "marked_mlir": %s,\n' "$(json_string "$(file_sha256 "${marked_mlir}")")" >> "${summary}"
 printf '    "object": %s,\n' "$(json_string "$(file_sha256 "${object_file}")")" >> "${summary}"
+printf '    "systemmodel_imported_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_imported_mlir}")")" >> "${summary}"
+printf '    "systemmodel_printed_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_printed_mlir}")")" >> "${summary}"
+printf '    "systemmodel_marked_mlir": %s,\n' "$(json_string "$(file_sha256 "${system_marked_mlir}")")" >> "${summary}"
+printf '    "systemmodel_object": %s,\n' "$(json_string "$(file_sha256 "${system_object_file}")")" >> "${summary}"
 printf '    "ida_host_imported_mlir": %s,\n' "$(json_string "$(file_sha256 "${ida_imported_mlir}")")" >> "${summary}"
 printf '    "ida_host_printed_mlir": %s,\n' "$(json_string "$(file_sha256 "${ida_printed_mlir}")")" >> "${summary}"
 printf '    "ida_host_marked_mlir": %s,\n' "$(json_string "$(file_sha256 "${ida_marked_mlir}")")" >> "${summary}"
@@ -1083,7 +1489,10 @@ printf '    "semantic_bridge_runtime_smoke_executable": %s,\n' "$(json_string "$
 printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_src}")")" >> "${summary}"
 printf '    "semantic_bridge_generated_derivative_object": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_object}")")" >> "${summary}"
 printf '    "semantic_bridge_runtime_real_smoke_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_smoke_exe}")")" >> "${summary}"
-printf '    "semantic_bridge_runtime_real_sundials_component_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_sundials_component_exe}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_sundials_component_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_sundials_component_exe}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_derivative_source": %s,\n' "$(json_string "$(file_sha256 "${system_layout_derivative_src}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_derivative_object": %s,\n' "$(json_string "$(file_sha256 "${system_layout_derivative_object}")")" >> "${summary}"
+printf '    "systemmodel_generated_jvp_smoke_executable": %s\n' "$(json_string "$(file_sha256 "${system_layout_smoke_exe}")")" >> "${summary}"
 printf '  }\n' >> "${summary}"
 printf '}\n' >> "${summary}"
 
@@ -1093,6 +1502,18 @@ if [[ -f "${marked_mlir}" ]]; then
   echo "wrote ${marked_mlir}"
 fi
 echo "wrote ${object_file}"
+if [[ -f "${system_imported_mlir}" ]]; then
+  echo "wrote ${system_imported_mlir}"
+fi
+if [[ -f "${system_printed_mlir}" ]]; then
+  echo "wrote ${system_printed_mlir}"
+fi
+if [[ -f "${system_marked_mlir}" ]]; then
+  echo "wrote ${system_marked_mlir}"
+fi
+if [[ -f "${system_object_file}" ]]; then
+  echo "wrote ${system_object_file}"
+fi
 if [[ -f "${ida_imported_mlir}" ]]; then
   echo "wrote ${ida_imported_mlir}"
 fi
@@ -1150,6 +1571,18 @@ fi
 if [[ -f "${bridge_runtime_real_sundials_component_log}" ]]; then
   echo "wrote ${bridge_runtime_real_sundials_component_log}"
 fi
+if [[ -f "${system_layout_derivative_src}" ]]; then
+  echo "wrote ${system_layout_derivative_src}"
+fi
+if [[ -f "${system_layout_derivative_object}" ]]; then
+  echo "wrote ${system_layout_derivative_object}"
+fi
+if [[ -f "${system_layout_smoke_exe}" ]]; then
+  echo "wrote ${system_layout_smoke_exe}"
+fi
+if [[ -f "${system_layout_smoke_log}" ]]; then
+  echo "wrote ${system_layout_smoke_log}"
+fi
 echo "wrote ${summary}"
 
 if [[ "${roundtrip_status}" -ne 0 ]]; then
@@ -1160,6 +1593,17 @@ fi
 if [[ -n "${marker_status}" && "${marker_status}" -ne 0 ]]; then
   echo "GridKit sparse Jacobian marker failed; see ${marker_log}" >&2
   exit "${marker_status}"
+fi
+
+if [[ "${system_attempted}" == "true" && -n "${system_roundtrip_status}" &&
+      "${system_roundtrip_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel Reactant import round-trip failed; see ${system_roundtrip_log}" >&2
+  exit "${system_roundtrip_status}"
+fi
+
+if [[ -n "${system_marker_status}" && "${system_marker_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel sparse Jacobian marker failed; see ${system_marker_log}" >&2
+  exit "${system_marker_status}"
 fi
 
 if [[ "${ida_attempted}" == "true" && -n "${ida_roundtrip_status}" &&
@@ -1249,6 +1693,24 @@ if [[ -n "${bridge_runtime_real_sundials_component_run_status}" &&
       "${bridge_runtime_real_sundials_component_run_status}" -ne 0 ]]; then
   echo "GridKit semantic bridge real SUNDIALS component smoke run failed; see ${bridge_runtime_real_sundials_component_log}" >&2
   exit "${bridge_runtime_real_sundials_component_run_status}"
+fi
+
+if [[ -n "${system_layout_derivative_compile_status}" &&
+      "${system_layout_derivative_compile_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout JVP derivative compile failed; see ${system_layout_derivative_compile_log}" >&2
+  exit "${system_layout_derivative_compile_status}"
+fi
+
+if [[ -n "${system_layout_smoke_compile_status}" &&
+      "${system_layout_smoke_compile_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout JVP smoke compile failed; see ${system_layout_smoke_log}" >&2
+  exit "${system_layout_smoke_compile_status}"
+fi
+
+if [[ -n "${system_layout_smoke_run_status}" &&
+      "${system_layout_smoke_run_status}" -ne 0 ]]; then
+  echo "GridKit SystemModel-layout JVP smoke run failed; see ${system_layout_smoke_log}" >&2
+  exit "${system_layout_smoke_run_status}"
 fi
 
 if [[ -n "${default_status}" && "${default_status}" -ne 0 ]]; then

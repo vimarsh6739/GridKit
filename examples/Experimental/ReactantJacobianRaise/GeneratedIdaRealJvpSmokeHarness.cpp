@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -128,6 +129,26 @@ namespace
   }
 } // namespace
 
+extern "C" void gridkitGeneratedIdaMatrixFreeInternalJvp(
+    GenT*,
+    double*,
+    double*,
+    double*,
+    double*,
+    double*,
+    double*,
+    double*);
+
+extern "C" void gridkitGeneratedIdaExplicitSparseInternalJvp(
+    GenT*,
+    double*,
+    double*,
+    double*,
+    const IdxT*,
+    double,
+    double*,
+    double*);
+
 extern "C" std::int64_t N_VGetLength(void* vector)
 {
   auto* typed_vector = static_cast<SmokeVector*>(vector);
@@ -243,6 +264,10 @@ int main()
   using AnalysisManager::Sundials::Runtime::hasGeneratedIdaJvpHostSplice;
   using AnalysisManager::Sundials::Runtime::teardownGeneratedIdaJvp;
 
+  constexpr double cj  = 1.75;
+  constexpr double eps = 1.0e-6;
+  constexpr double tol = 3.0e-6;
+
   GridKit::PhasorDynamics::Bus<ScalarT, IdxT> bus(1.04, -0.08);
   GenT gen(&bus, 0.8, 0.2, 3.5, 0.15, 0.0, 0.22);
 
@@ -250,6 +275,13 @@ int main()
   gen.allocate();
   bus.initialize();
   gen.initialize();
+  gen.updateTime(0.125, cj);
+
+  for (IdxT index = 0; index < bus.size(); ++index)
+  {
+    bus.setVariableIndex(index, gen.size() + index);
+    bus.setResidualIndex(index, gen.size() + index);
+  }
 
   if (!check(hasGeneratedIdaJvpHostSplice(), "generated hook symbols missing"))
   {
@@ -270,10 +302,6 @@ int main()
   const auto*         wb_ptr = static_cast<const double*>(inputs[3]);
   std::vector<double> wb{wb_ptr[0], wb_ptr[1]};
 
-  constexpr double cj  = 1.75;
-  constexpr double eps = 1.0e-6;
-  constexpr double tol = 3.0e-6;
-
   std::vector<double> v{0.25, -0.5, 0.75, -1.0, 1.25};
   std::vector<double> yp_seed(v.size());
   std::transform(v.begin(), v.end(), yp_seed.begin(), [](double value)
@@ -281,8 +309,10 @@ int main()
 
   std::vector<double> residual(y.size(), 0.0);
   std::vector<double> jv(y.size(), 0.0);
+  std::vector<double> matrix_free_jv(y.size(), 0.0);
   std::vector<double> tmp1(y.size(), 0.0);
   std::vector<double> tmp2(y.size(), 0.0);
+  std::vector<double> wb_seed(wb.size(), 0.0);
 
   SmokeVector yy{static_cast<std::int64_t>(y.size()), y.data()};
   SmokeVector yp_vector{static_cast<std::int64_t>(yp.size()), yp.data()};
@@ -335,6 +365,35 @@ int main()
     return 1;
   }
 
+  gridkitGeneratedIdaMatrixFreeInternalJvp(&gen,
+                                           y.data(),
+                                           v.data(),
+                                           yp.data(),
+                                           yp_seed.data(),
+                                           wb.data(),
+                                           wb_seed.data(),
+                                           matrix_free_jv.data());
+
+  std::vector<double> global_seed(
+      static_cast<std::size_t>(gen.size() + bus.size()), 0.0);
+  std::copy(v.begin(), v.end(), global_seed.begin());
+  std::copy(wb_seed.begin(),
+            wb_seed.end(),
+            global_seed.begin() + static_cast<std::ptrdiff_t>(gen.size()));
+  std::vector<IdxT> bus_variable_indices{
+      bus.getVariableIndex(0),
+      bus.getVariableIndex(1),
+  };
+  std::vector<double> explicit_csr_jv(y.size(), 0.0);
+  gridkitGeneratedIdaExplicitSparseInternalJvp(&gen,
+                                               y.data(),
+                                               yp.data(),
+                                               wb.data(),
+                                               bus_variable_indices.data(),
+                                               cj,
+                                               global_seed.data(),
+                                               explicit_csr_jv.data());
+
   const auto y_plus   = perturb(y, v, eps);
   const auto y_minus  = perturb(y, v, -eps);
   const auto yp_plus  = perturb(yp, yp_seed, eps);
@@ -351,14 +410,19 @@ int main()
   }
 
   const bool vectors_match = compareVectors(jv, finite_difference, tol);
+  const bool matrix_free_match = compareVectors(jv, matrix_free_jv, tol);
+  const bool explicit_csr_match = compareVectors(jv, explicit_csr_jv, tol);
   teardownGeneratedIdaJvp(&ida_mem);
   if (!check(sun_linear_solver_frees == 1,
              "generated teardown did not release remembered linear solver") ||
-      !check(vectors_match, "generated JVP did not match finite difference"))
+      !check(vectors_match, "generated JVP did not match finite difference") ||
+      !check(matrix_free_match, "generated JVP did not match MatrixFree oracle") ||
+      !check(explicit_csr_match, "generated JVP did not match explicit CSR J*v"))
   {
     return 1;
   }
 
-  std::cout << "generated real JVP smoke: ok\n";
+  std::cout << "generated real JVP smoke: ok finite_difference=ok"
+            << " matrix_free_oracle=ok explicit_csr_oracle=ok\n";
   return 0;
 }
