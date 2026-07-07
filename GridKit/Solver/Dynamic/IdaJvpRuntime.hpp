@@ -34,6 +34,8 @@ namespace AnalysisManager
       void unregisterIdaJvpUserData(IdaJvpUserData* user_data);
       bool isIdaJvpUserData(const void* user_data);
       void* unwrapIdaUserDataModel(void* user_data);
+      void rememberIdaJvpUserData(void* owner, IdaJvpUserData* user_data);
+      IdaJvpUserData* takeRememberedIdaJvpUserData(void* owner);
     } // namespace Runtime
   } // namespace Sundials
 } // namespace AnalysisManager
@@ -51,6 +53,11 @@ extern "C" void* __enzymexla_sundials_ida_create_jvp_context(void* model,
                                                               std::int64_t output_size);
 
 extern "C" void __enzymexla_sundials_ida_destroy_jvp_context(void* user_data);
+
+extern "C" void __enzymexla_sundials_ida_remember_jvp_context(void* ida_mem,
+                                                               void* user_data);
+
+extern "C" void __enzymexla_sundials_ida_destroy_remembered_jvp_context(void* ida_mem);
 
 extern "C" void __enzymexla_sundials_ida_register_jvp_context(void* user_data);
 

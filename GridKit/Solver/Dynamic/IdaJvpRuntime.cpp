@@ -2,6 +2,7 @@
 
 #include <mutex>
 #include <new>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace AnalysisManager
@@ -23,6 +24,19 @@ namespace AnalysisManager
           static std::unordered_set<const void*> registry;
           return registry;
         }
+
+        std::mutex& ownerRegistryMutex()
+        {
+          static std::mutex registry_mutex;
+          return registry_mutex;
+        }
+
+        std::unordered_map<const void*, IdaJvpUserData*>& ownerRegistry()
+        {
+          static std::unordered_map<const void*, IdaJvpUserData*> registry;
+          return registry;
+        }
+
       } // namespace
 
       void registerIdaJvpUserData(IdaJvpUserData* user_data)
@@ -47,6 +61,32 @@ namespace AnalysisManager
         userDataRegistry().erase(user_data);
       }
 
+      void destroyGeneratedIdaJvpUserData(IdaJvpUserData* user_data)
+      {
+        if (user_data == nullptr)
+        {
+          return;
+        }
+
+        {
+          std::lock_guard<std::mutex> lock(ownerRegistryMutex());
+          for (auto iter = ownerRegistry().begin(); iter != ownerRegistry().end();)
+          {
+            if (iter->second == user_data)
+            {
+              iter = ownerRegistry().erase(iter);
+            }
+            else
+            {
+              ++iter;
+            }
+          }
+        }
+
+        unregisterIdaJvpUserData(user_data);
+        delete user_data;
+      }
+
       bool isIdaJvpUserData(const void* user_data)
       {
         std::lock_guard<std::mutex> lock(userDataRegistryMutex());
@@ -62,6 +102,47 @@ namespace AnalysisManager
 
         auto* context = static_cast<IdaJvpUserData*>(user_data);
         return context->model;
+      }
+
+      void rememberIdaJvpUserData(void* owner, IdaJvpUserData* user_data)
+      {
+        if (owner == nullptr || user_data == nullptr)
+        {
+          return;
+        }
+
+        IdaJvpUserData* replaced = nullptr;
+        {
+          std::lock_guard<std::mutex> lock(ownerRegistryMutex());
+          auto& slot = ownerRegistry()[owner];
+          if (slot == user_data)
+          {
+            return;
+          }
+          replaced = slot;
+          slot     = user_data;
+        }
+
+        destroyGeneratedIdaJvpUserData(replaced);
+      }
+
+      IdaJvpUserData* takeRememberedIdaJvpUserData(void* owner)
+      {
+        if (owner == nullptr)
+        {
+          return nullptr;
+        }
+
+        std::lock_guard<std::mutex> lock(ownerRegistryMutex());
+        auto                        found = ownerRegistry().find(owner);
+        if (found == ownerRegistry().end())
+        {
+          return nullptr;
+        }
+
+        IdaJvpUserData* user_data = found->second;
+        ownerRegistry().erase(found);
+        return user_data;
       }
     } // namespace Runtime
   } // namespace Sundials
@@ -170,12 +251,27 @@ extern "C" void* __enzymexla_sundials_ida_create_jvp_context(void* model,
 
 extern "C" void __enzymexla_sundials_ida_destroy_jvp_context(void* user_data)
 {
+  using AnalysisManager::Sundials::Runtime::destroyGeneratedIdaJvpUserData;
   using AnalysisManager::Sundials::Runtime::IdaJvpUserData;
-  using AnalysisManager::Sundials::Runtime::unregisterIdaJvpUserData;
 
-  auto* context = static_cast<IdaJvpUserData*>(user_data);
-  unregisterIdaJvpUserData(context);
-  delete context;
+  destroyGeneratedIdaJvpUserData(static_cast<IdaJvpUserData*>(user_data));
+}
+
+extern "C" void __enzymexla_sundials_ida_remember_jvp_context(void* ida_mem,
+                                                               void* user_data)
+{
+  using AnalysisManager::Sundials::Runtime::IdaJvpUserData;
+  using AnalysisManager::Sundials::Runtime::rememberIdaJvpUserData;
+
+  rememberIdaJvpUserData(ida_mem, static_cast<IdaJvpUserData*>(user_data));
+}
+
+extern "C" void __enzymexla_sundials_ida_destroy_remembered_jvp_context(void* ida_mem)
+{
+  using AnalysisManager::Sundials::Runtime::destroyGeneratedIdaJvpUserData;
+  using AnalysisManager::Sundials::Runtime::takeRememberedIdaJvpUserData;
+
+  destroyGeneratedIdaJvpUserData(takeRememberedIdaJvpUserData(ida_mem));
 }
 
 extern "C" void __enzymexla_sundials_ida_register_jvp_context(void* user_data)

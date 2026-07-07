@@ -186,6 +186,8 @@ marked_attributes.semantic_bridge_runtime_jactimes_callbacks = 1
 marked_attributes.semantic_bridge_runtime_registrations = 1
 marked_attributes.semantic_bridge_runtime_context_setup_functions = 1
 marked_attributes.semantic_bridge_runtime_context_teardown_functions = 1
+marked_attributes.semantic_bridge_runtime_context_owner_registry_attrs = 1
+marked_attributes.semantic_bridge_runtime_context_teardown_ida_mem_attrs = 1
 marked_attributes.semantic_bridge_runtime_host_linear_solver_source_attrs = 5
 marked_attributes.semantic_bridge_runtime_host_jacobian_registration_source_attrs = 5
 marked_attributes.semantic_bridge_runtime_host_configure_source_attrs = 4
@@ -214,10 +216,14 @@ marked_attributes.semantic_bridge_runtime_context_registration_calls = 1
 marked_attributes.semantic_bridge_runtime_context_registration_helper_calls = 1
 marked_attributes.semantic_bridge_runtime_context_registration_declarations = 1
 marked_attributes.semantic_bridge_runtime_context_create_calls = 1
+marked_attributes.semantic_bridge_runtime_context_remember_calls = 1
 marked_attributes.semantic_bridge_runtime_context_destroy_calls = 1
+marked_attributes.semantic_bridge_runtime_context_destroy_for_ida_mem_calls = 1
 marked_attributes.semantic_bridge_runtime_context_output_size_calls = 1
 marked_attributes.semantic_bridge_runtime_context_create_declarations = 1
 marked_attributes.semantic_bridge_runtime_context_destroy_declarations = 1
+marked_attributes.semantic_bridge_runtime_context_remember_declarations = 1
+marked_attributes.semantic_bridge_runtime_context_destroy_remembered_declarations = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernel_attrs = 1
 marked_attributes.semantic_bridge_runtime_context_setup_attrs = 1
 marked_attributes.semantic_bridge_runtime_context_teardown_attrs = 1
@@ -357,10 +363,13 @@ symbol, SUNDIALS declarations, and a registration helper that constructs
 same pass now also emits a host-facing context setup helper that calls
 `N_VGetLength(yy)` to derive the residual output size, marks that call with
 `enzymexla.sundials.role = "ida_jvp_context_output_size"`, calls
-`__enzymexla_sundials_ida_create_jvp_context`, stores the resulting context
-pointer through an out parameter, and delegates to the generated registration
-helper, plus a teardown helper that calls
-`__enzymexla_sundials_ida_destroy_jvp_context`. The pass also emits a symbolic
+`__enzymexla_sundials_ida_create_jvp_context`, records the resulting context
+under the IDA memory owner through
+`__enzymexla_sundials_ida_remember_jvp_context`, stores the context pointer
+through an out parameter for immediate callers, and delegates to the generated
+registration helper, plus a teardown helper that takes the IDA memory pointer
+and calls `__enzymexla_sundials_ida_destroy_remembered_jvp_context`. The pass
+also emits a symbolic
 `enzymexla.sundials.ida_host_splice` plan and points the selected solve at it
 with `enzymexla.sundials.runtime_host_splice`; the plan names the generated
 setup, teardown, registration, JacTimes callback, JVP adapter, and raw JVP
@@ -417,14 +426,15 @@ points for creating, registering, destroying, and discovering generated callback
 contexts, unwrapping the original model pointer for legacy residual/Jacobian
 callbacks, accessing context inputs, and accumulating the y/yp JVP
 contributions. Generated contexts copy the residual input pointer slots at
-creation time, so a compiler-generated setup call can assemble a temporary
-pointer array without leaving the later IDA callback with a dangling array
-reference. The remaining executable gap is host splicing: lowered code still
-has to use the recorded context-input contract to build the residual input
-pointer array, call the generated context setup
-helper from the host configuration path, keep the returned context pointer alive
-for IDA, and call the generated teardown helper when the solver no longer needs
-the callback. The setup helper now derives the output size from the IDA `yy`
+creation time and are remembered by IDA memory pointer, so a compiler-generated
+setup call can assemble a temporary pointer array and a temporary out slot
+without leaving the later IDA callback with a dangling array reference or
+requiring a new C++ field just to reach teardown. The remaining executable gap
+is host splicing: lowered code still has to use the recorded context-input
+contract to build the residual input pointer array, call the generated context
+setup helper from the host configuration path, and call the generated teardown
+helper with the IDA memory pointer when the solver no longer needs the
+callback. The setup helper now derives the output size from the IDA `yy`
 template via `N_VGetLength`, so host splicing no longer has to supply that
 operand. If those preconditions fail, the fallback raw kernel is still marked
 `semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple

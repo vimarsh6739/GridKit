@@ -442,7 +442,24 @@ namespace GridKit
         success *= isEqual(generated_jv[0], 3.0);
         success *= isEqual(generated_jv[1], 7.0);
         success *= isEqual(generated_jv[2], 6.25);
-        __enzymexla_sundials_ida_destroy_jvp_context(generated_context);
+
+        double ida_mem_token = 0.0;
+        __enzymexla_sundials_ida_remember_jvp_context(&ida_mem_token,
+                                                       generated_context);
+        __enzymexla_sundials_ida_destroy_remembered_jvp_context(&ida_mem_token);
+        success *= (!AnalysisManager::Sundials::Runtime::isIdaJvpUserData(generated_context));
+        __enzymexla_sundials_ida_destroy_remembered_jvp_context(&ida_mem_token);
+
+        void* direct_destroy_context =
+          __enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, 4, 3);
+        __enzymexla_sundials_ida_register_jvp_context(direct_destroy_context);
+        double direct_destroy_ida_mem_token = 0.0;
+        __enzymexla_sundials_ida_remember_jvp_context(&direct_destroy_ida_mem_token,
+                                                       direct_destroy_context);
+        __enzymexla_sundials_ida_destroy_jvp_context(direct_destroy_context);
+        success *= (!AnalysisManager::Sundials::Runtime::isIdaJvpUserData(direct_destroy_context));
+        __enzymexla_sundials_ida_destroy_remembered_jvp_context(
+          &direct_destroy_ida_mem_token);
         success *= (__enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, -1, 3) == nullptr);
 
         return success.report(__func__);
