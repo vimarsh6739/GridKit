@@ -262,6 +262,8 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
   bridge_host_residual="$(extract_symbol_after "residual" "${ida_solve_line}")"
   bridge_host_jacobian="$(extract_symbol_after "jacobian" "${ida_solve_line}")"
   bridge_host_source_function="$(extract_string_attr "source_function" "${ida_solve_line}")"
+  bridge_host_linear_solver_source_function="$(extract_string_attr "linear_solver_source_function" "${ida_solve_line}")"
+  bridge_host_jacobian_registration_source_function="$(extract_string_attr "jacobian_registration_source_function" "${ida_solve_line}")"
 
   if [[ -z "${materialization_line}" || -z "${dfdyp_materialization_line}" ||
         -z "${ida_solve_line}" ]]; then
@@ -276,14 +278,16 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
         -v materializer="${bridge_materializer}" \
         -v host_residual="${bridge_host_residual}" \
         -v host_jacobian="${bridge_host_jacobian}" \
-        -v host_source="${bridge_host_source_function}" '
+        -v host_source="${bridge_host_source_function}" \
+        -v host_linear_solver_source="${bridge_host_linear_solver_source_function}" \
+        -v host_jacobian_registration_source="${bridge_host_jacobian_registration_source_function}" '
       !inserted && /^module/ {
         print
         print "  enzymexla.sundials.ida_solve residual = @" residual
         print "    jacobian = @" materializer
         print "    linear_solver = <explicit_sparse_direct>"
         print "    jacobian_demand = <explicit_matrix>"
-        print "    () {bridge_host_jacobian_callback = \"" host_jacobian "\", bridge_host_residual_callback = \"" host_residual "\", bridge_host_source_function = \"" host_source "\", enzymexla.sundials.allow_matrix_free, source = \"gridkit_semantic_bridge\"} : () -> ()"
+        print "    () {bridge_host_jacobian_callback = \"" host_jacobian "\", bridge_host_jacobian_registration_source_function = \"" host_jacobian_registration_source "\", bridge_host_linear_solver_source_function = \"" host_linear_solver_source "\", bridge_host_residual_callback = \"" host_residual "\", bridge_host_source_function = \"" host_source "\", enzymexla.sundials.allow_matrix_free, source = \"gridkit_semantic_bridge\"} : () -> ()"
         inserted = 1
         next
       }
@@ -476,10 +480,18 @@ printf '    "ida_host_user_data_registration_roles": %s,\n' "$(count_matches "id
 printf '    "ida_host_user_data_unwrap_calls": %s,\n' "$(count_matches "unwrapIdaUserDataModel" "${ida_printed_mlir}")" >> "${summary}"
 printf '    "ida_host_sparse_direct_roles": %s,\n' "$(count_matches "ida_sparse_direct_linear_solver" "${ida_marked_mlir}")" >> "${summary}"
 printf '    "ida_host_jacobian_registration_roles": %s,\n' "$(count_matches "ida_jacobian_registration" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_linear_solver_source_function_attrs": %s,\n' "$(count_matches "linear_solver_source_function" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_jacobian_registration_source_function_attrs": %s,\n' "$(count_matches "jacobian_registration_source_function" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_jvp_setup_yy_template_operand_attrs": %s,\n' "$(count_matches "jvp_setup_yy_template_operand" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_jvp_setup_sunctx_operand_attrs": %s,\n' "$(count_matches "jvp_setup_sunctx_operand" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_jvp_setup_ida_mem_operand_attrs": %s,\n' "$(count_matches "jvp_setup_ida_mem_operand" "${ida_marked_mlir}")" >> "${summary}"
+printf '    "ida_host_jvp_setup_model_operand_attrs": %s,\n' "$(count_matches "jvp_setup_model_operand" "${ida_marked_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_ida_solves": %s,\n' "$(count_regex "enzymexla\\.sundials\\.ida_solve[[:space:]]" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_jacobian_action_solves": %s,\n' "$(count_regex "enzymexla\\.sundials\\.ida_solve .*jacobian_demand = <jacobian_action>" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_matrix_free_selected_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_matrix_free_selected" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_allow_matrix_free_attrs": %s,\n' "$(count_matches "enzymexla.sundials.allow_matrix_free" "${bridge_selected_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_host_linear_solver_source_attrs": %s,\n' "$(count_matches "bridge_host_linear_solver_source_function" "${bridge_selected_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_host_jacobian_registration_source_attrs": %s,\n' "$(count_matches "bridge_host_jacobian_registration_source_function" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_effective_jacobian_actions_synthesized_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_effective_jacobian_actions_synthesized" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_effective_jacobian_actions": %s,\n' "$(count_matches "enzymexla.sundials.ida_effective_jacobian_action," "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_glue_emitted_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_runtime_glue_emitted" "${bridge_runtime_mlir}")" >> "${summary}"
@@ -490,6 +502,9 @@ printf '    "semantic_bridge_runtime_jactimes_callbacks": %s,\n' "$(count_matche
 printf '    "semantic_bridge_runtime_registrations": %s,\n' "$(count_matches "ida_jactimes_registration" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_context_setup_functions": %s,\n' "$(count_matches "ida_jvp_context_setup" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_context_teardown_functions": %s,\n' "$(count_matches "ida_jvp_context_teardown" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_host_linear_solver_source_attrs": %s,\n' "$(count_matches "host_linear_solver_source_function" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_host_jacobian_registration_source_attrs": %s,\n' "$(count_matches "host_jacobian_registration_source_function" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_host_configure_source_attrs": %s,\n' "$(count_matches "host_configure_source_function" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_placeholder_callbacks": %s,\n' "$(count_matches "enzymexla.sundials.callback_body = \"placeholder\"" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_delegating_callbacks": %s,\n' "$(count_matches "enzymexla.sundials.callback_body = \"delegates_jvp_kernel\"" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_jvp_kernel_adapters": %s,\n' "$(count_matches "enzymexla.sundials.runtime_role = \"ida_jvp_kernel_adapter\"" "${bridge_runtime_mlir}")" >> "${summary}"

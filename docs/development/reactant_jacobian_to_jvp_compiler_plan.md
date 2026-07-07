@@ -160,10 +160,18 @@ marked_attributes.ida_host_user_data_registration_roles = 3
 marked_attributes.ida_host_user_data_unwrap_calls = 16
 marked_attributes.ida_host_sparse_direct_roles = 3
 marked_attributes.ida_host_jacobian_registration_roles = 3
+marked_attributes.ida_host_linear_solver_source_function_attrs = 3
+marked_attributes.ida_host_jacobian_registration_source_function_attrs = 3
+marked_attributes.ida_host_jvp_setup_yy_template_operand_attrs = 12
+marked_attributes.ida_host_jvp_setup_sunctx_operand_attrs = 12
+marked_attributes.ida_host_jvp_setup_ida_mem_operand_attrs = 6
+marked_attributes.ida_host_jvp_setup_model_operand_attrs = 3
 marked_attributes.semantic_bridge_ida_solves = 1
 marked_attributes.semantic_bridge_jacobian_action_solves = 1
 marked_attributes.semantic_bridge_matrix_free_selected_attr = 1
 marked_attributes.semantic_bridge_allow_matrix_free_attrs = 1
+marked_attributes.semantic_bridge_host_linear_solver_source_attrs = 1
+marked_attributes.semantic_bridge_host_jacobian_registration_source_attrs = 1
 marked_attributes.semantic_bridge_effective_jacobian_actions_synthesized_attr = 1
 marked_attributes.semantic_bridge_effective_jacobian_actions = 1
 marked_attributes.semantic_bridge_runtime_glue_emitted_attr = 1
@@ -174,6 +182,9 @@ marked_attributes.semantic_bridge_runtime_jactimes_callbacks = 1
 marked_attributes.semantic_bridge_runtime_registrations = 1
 marked_attributes.semantic_bridge_runtime_context_setup_functions = 1
 marked_attributes.semantic_bridge_runtime_context_teardown_functions = 1
+marked_attributes.semantic_bridge_runtime_host_linear_solver_source_attrs = 5
+marked_attributes.semantic_bridge_runtime_host_jacobian_registration_source_attrs = 5
+marked_attributes.semantic_bridge_runtime_host_configure_source_attrs = 4
 marked_attributes.semantic_bridge_runtime_placeholder_callbacks = 0
 marked_attributes.semantic_bridge_runtime_delegating_callbacks = 1
 marked_attributes.semantic_bridge_runtime_jvp_kernel_adapters = 1
@@ -313,8 +324,13 @@ decision, the export script also generates
 `gridkit_semantic_bridge_matrix_free_input.mlir`: a combined semantic overlay
 that keeps the sparse materialization/action records, inserts an IDA solve
 record with `enzymexla.sundials.allow_matrix_free`, and preserves the recovered
-host `Ida::Residual`, `Ida::Jac`, and `configureSimulation()` symbols as
-provenance attributes. Running synthesis plus
+host `Ida::Residual`, `Ida::Jac`, `configureSimulation()`, and
+`configureLinearSolverSparse()` symbols as provenance attributes. The recovered
+linear-solver helper is carried through the bridge as
+`bridge_host_linear_solver_source_function` and
+`bridge_host_jacobian_registration_source_function`, so the generated runtime
+glue names the concrete host helper that still owns the original KLU/Jacobian
+registration sequence. Running synthesis plus
 `--select-sundials-ida-matrix-free` on this overlay now makes the compiler pair
 the recovered `DfDy` and `DfDyp` materializers into a semantic IDA effective
 Jacobian action and produces
@@ -334,7 +350,13 @@ same pass now also emits a host-facing context setup helper that calls
 `__enzymexla_sundials_ida_create_jvp_context`, stores the resulting context
 pointer through an out parameter, and delegates to the generated registration
 helper, plus a teardown helper that calls
-`__enzymexla_sundials_ida_destroy_jvp_context`. The registration helper is
+`__enzymexla_sundials_ida_destroy_jvp_context`. The setup, registration,
+teardown, and JacTimes callback helpers now carry
+`enzymexla.sundials.host_linear_solver_source_function` and
+`enzymexla.sundials.host_jacobian_registration_source_function` attributes
+derived from the recovered host region; for the current GridKit artifact both
+point at the `Ida<double, long>::configureLinearSolverSparse()` instantiation.
+The registration helper is
 marked with
 `enzymexla.sundials.callback_context = "ida_jvp_user_data_context"`, making the
 fourth helper argument an explicit reusable `IdaJvpUserData` context pointer
@@ -394,6 +416,14 @@ calls. From those calls it emits `enzymexla.sundials.ida_solve` records without
 raising the SUNDIALS implementation. The recovered records distinguish
 explicit sparse direct solves using KLU plus `IDASetJacFn`, dense direct solves
 without a user Jacobian callback, and iterative solves using `IDASetJacTimes`.
+The pass now annotates host calls with operand-index roles needed by a future
+splice, including `jvp_setup_yy_template_operand`,
+`jvp_setup_sunctx_operand`, `jvp_setup_ida_mem_operand`, and
+`jvp_setup_model_operand`. It also records which source function provided the
+residual registration, user-data registration, linear solver, and Jacobian or
+JacTimes registration. For split host configurations this separates the
+top-level `configureSimulation()` source from the helper that owns
+`IDASetLinearSolver` and `IDASetJacFn`.
 The recovery now also composes split host helpers generically: a source function
 that registers `IDAInit` may call a helper that configures `SUNLinSol_KLU` and
 `IDASetJacFn`, and the pass summarizes those helper facts into one semantic
