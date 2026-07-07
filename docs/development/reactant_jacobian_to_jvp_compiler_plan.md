@@ -225,6 +225,8 @@ marked_attributes.semantic_bridge_ida_solves = 1
 marked_attributes.semantic_bridge_jacobian_action_solves = 1
 marked_attributes.semantic_bridge_matrix_free_selected_attr = 1
 marked_attributes.semantic_bridge_allow_matrix_free_attrs = 1
+marked_attributes.semantic_bridge_unique_host_jacobian_bridge_attr = 1
+marked_attributes.semantic_bridge_unique_host_jacobian_bridge_solves = 1
 marked_attributes.semantic_bridge_host_linear_solver_source_attrs = 1
 marked_attributes.semantic_bridge_host_jacobian_registration_source_attrs = 1
 marked_attributes.semantic_bridge_effective_jacobian_actions_synthesized_attr = 1
@@ -428,18 +430,27 @@ GenClassical Jacobian action records because the two source regions are still
 exported separately. To make that boundary explicit and test the compiler
 decision, the export script also generates
 `gridkit_semantic_bridge_matrix_free_input.mlir`: a combined semantic overlay
-that keeps the sparse materialization/action records, inserts an IDA solve
-record with `enzymexla.sundials.allow_matrix_free`, and preserves the recovered
-host `Ida::Residual`, `Ida::Jac`, `configureSimulation()`, and
-`configureLinearSolverSparse()` symbols as provenance attributes. The recovered
-linear-solver helper is carried through the bridge as
+that keeps the sparse materialization/action records and inserts an IDA solve
+record whose `residual` and `jacobian` are still the recovered host
+`Ida::Residual` and `Ida::Jac` callbacks. That solve carries
+`enzymexla.sundials.bridge_jacobian_materializer = @DfDy` and the recovered
+`configureSimulation()` and `configureLinearSolverSparse()` symbols as
+provenance attributes. The recovered linear-solver helper is carried through
+the bridge as
 `bridge_host_linear_solver_source_function` and
 `bridge_host_jacobian_registration_source_function`, so the generated runtime
 glue names the concrete host helper that still owns the original KLU/Jacobian
-registration sequence. Running synthesis plus
-`--select-sundials-ida-matrix-free` on this overlay now makes the compiler pair
-the recovered `DfDy` and `DfDyp` materializers into a semantic IDA effective
-Jacobian action and produces
+registration sequence.
+
+Running
+`--synthesize-sundials-ida-jacobian-actions=allow-unique-host-jacobian-bridge=true`
+plus `--select-sundials-ida-matrix-free` on this overlay now makes the compiler
+pair the recovered `DfDy` and `DfDyp` materializers into a semantic IDA
+effective Jacobian action, retarget the host-callback solve to the semantic
+residual/materializer pair, preserve the original host callbacks as
+`bridge_host_residual_callback` and `bridge_host_jacobian_callback`, and mark
+the solve with `enzymexla.sundials.allow_matrix_free` and
+`enzymexla.sundials.unique_host_jacobian_bridge`. The result is
 `gridkit_semantic_bridge_matrix_free_selected.mlir`, where the bridged solve is
 retargeted to `linear_solver = <jacobian_action_iterative>` and
 `jacobian_demand = <jacobian_action>`. This is compiler-visible selection
@@ -565,8 +576,9 @@ adapter now registers JacTimes automatically, configures SPGMR with a Krylov
 dimension derived from the IDA `yy` template length, and runs a complete
 one-bus/one-generator `Ida<SystemModel>` simulation with JacTimes activity and
 zero explicit Jacobian evaluations. The remaining executable gap is replacing
-the script-injected semantic bridge and SystemModel-layout runtime template
-with in-compiler recovery and lowering across the actual source boundary. If
+the script-side host/materializer colocation hint and SystemModel-layout
+runtime template with in-compiler recovery and lowering across the actual
+source boundary. If
 those preconditions fail, the
 fallback raw kernel is still marked `semantic_raw_kernel_requires_lowering` and
 returns a nonzero status. Multiple provenance-matching raw kernels are rejected rather
@@ -687,6 +699,17 @@ solves to the generated action. This separates solver legality from the
 low-level sparse helper body: the original explicit materializer remains
 visible as the source computation, while the solver can now refer to the JVP
 action that later lowering must turn into callback glue.
+When run with
+`allow-unique-host-jacobian-bridge=true`, the same pass can also retarget a
+single explicit sparse/direct host-callback solve to the unique semantic
+materialization pair when the solve carries
+`enzymexla.sundials.bridge_jacobian_materializer`. The pass preserves the
+original host residual and Jacobian callbacks as `bridge_host_*` attributes,
+sets `enzymexla.sundials.unique_host_jacobian_bridge`, and records the module
+count in `enzymexla.sundials.ida_unique_host_jacobian_bridges`. This moves the
+host-callback-to-semantic-solve retargeting out of the GridKit export script;
+the script still supplies the combined module and materializer hint because the
+source regions are exported separately.
 
 `--select-sundials-ida-matrix-free` is the first solver-selection pass. It
 retargets an `enzymexla.sundials.ida_solve` from:
@@ -712,8 +735,9 @@ unambiguous residual match. It annotates selected solves with
 rewrite numerical code; it changes the semantic solver demand that
 `--emit-sundials-ida-runtime-glue-llvm` consumes when emitting generated
 SUNDIALS callback registration glue.
-The generated GridKit semantic bridge currently selects one such solve and
-links it to the compiler-synthesized
+The generated GridKit semantic bridge currently starts from one recovered
+host-callback explicit solve, uses the unique-host bridge mode above, and links
+it to the compiler-synthesized
 `__enzymexla_sundials_ida_effective_jacobian_action_0`, which carries
 `y_materialization = @DfDy`, `yp_materialization = @DfDyp`, and
 `yp_active_input_index = 2` metadata for the IDA effective Jacobian
@@ -956,12 +980,12 @@ repeatable artifact path and records the default-pipeline crash separately.
 
 ## Next Implementation Steps
 
-1. Replace the remaining script-injected semantic solve bridge with an
+1. Replace the remaining script-side colocation and materializer hint with an
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
-   the synthesized Jacobian action records. The current export proves both the
-   `SystemModel::evaluateJacobian()` source region raise/mark path and a
-   generated aggregate SystemModel-layout JVP/IDA run, but the compiler bridge
-   still needs to produce that action from the recovered source boundary.
+   the synthesized Jacobian action records. The host-callback solve retargeting
+   is now compiler-owned for the hinted unique-host case; the current export
+   still creates the combined overlay because the sparse Jacobian source region
+   and IDA host configuration are exported separately.
 2. Replace the export-only runtime-glue and SystemModel-layout derivative
    artifacts with compiler-lowered objects linked into a GridKit IDA executable
    for the selected SystemModel source region.

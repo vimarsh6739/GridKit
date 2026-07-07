@@ -434,8 +434,9 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
         -z "${ida_solve_line}" ]]; then
     bridge_skipped_reason="missing DfDy/DfDyp sparse materialization or recovered IDA solve"
   elif [[ -z "${bridge_materializer}" || -z "${bridge_dfdyp_materializer}" ||
-          -z "${bridge_residual}" ]]; then
-    bridge_skipped_reason="could not parse sparse materializer, DfDyp materializer, or residual symbol"
+          -z "${bridge_residual}" || -z "${bridge_host_residual}" ||
+          -z "${bridge_host_jacobian}" ]]; then
+    bridge_skipped_reason="could not parse sparse materializer, DfDyp materializer, residual symbol, or recovered host IDA callbacks"
   else
     bridge_attempted="true"
     set +e
@@ -448,11 +449,11 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
         -v host_jacobian_registration_source="${bridge_host_jacobian_registration_source_function}" '
       !inserted && /^module/ {
         print
-        print "  enzymexla.sundials.ida_solve residual = @" residual
-        print "    jacobian = @" materializer
+        print "  enzymexla.sundials.ida_solve residual = @" host_residual
+        print "    jacobian = @" host_jacobian
         print "    linear_solver = <explicit_sparse_direct>"
         print "    jacobian_demand = <explicit_matrix>"
-        print "    () {bridge_host_jacobian_callback = \"" host_jacobian "\", bridge_host_jacobian_registration_source_function = \"" host_jacobian_registration_source "\", bridge_host_linear_solver_source_function = \"" host_linear_solver_source "\", bridge_host_residual_callback = \"" host_residual "\", bridge_host_source_function = \"" host_source "\", enzymexla.sundials.allow_matrix_free, source = \"gridkit_semantic_bridge\"} : () -> ()"
+        print "    () {bridge_host_jacobian_callback = \"" host_jacobian "\", bridge_host_jacobian_registration_source_function = \"" host_jacobian_registration_source "\", bridge_host_linear_solver_source_function = \"" host_linear_solver_source "\", bridge_host_residual_callback = \"" host_residual "\", bridge_host_source_function = \"" host_source "\", enzymexla.sundials.bridge_jacobian_materializer = @" materializer ", source = \"gridkit_semantic_bridge\"} : () -> ()"
         inserted = 1
         next
       }
@@ -463,7 +464,8 @@ if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
 
     if [[ "${awk_status}" -eq 0 ]]; then
       set +e
-      "${enzymexlamlir_opt}" --synthesize-sundials-ida-jacobian-actions \
+      "${enzymexlamlir_opt}" \
+        --synthesize-sundials-ida-jacobian-actions=allow-unique-host-jacobian-bridge=true \
         --select-sundials-ida-matrix-free \
         "${bridge_mlir}" > "${bridge_selected_mlir}" 2> "${bridge_log}"
       bridge_status=$?
@@ -1666,6 +1668,8 @@ printf '    "semantic_bridge_ida_solves": %s,\n' "$(count_regex "enzymexla\\.sun
 printf '    "semantic_bridge_jacobian_action_solves": %s,\n' "$(count_regex "enzymexla\\.sundials\\.ida_solve .*jacobian_demand = <jacobian_action>" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_matrix_free_selected_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_matrix_free_selected" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_allow_matrix_free_attrs": %s,\n' "$(count_matches "enzymexla.sundials.allow_matrix_free" "${bridge_selected_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_unique_host_jacobian_bridge_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_unique_host_jacobian_bridges" "${bridge_selected_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_unique_host_jacobian_bridge_solves": %s,\n' "$(count_matches "enzymexla.sundials.unique_host_jacobian_bridge" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_host_linear_solver_source_attrs": %s,\n' "$(count_matches "bridge_host_linear_solver_source_function" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_host_jacobian_registration_source_attrs": %s,\n' "$(count_matches "bridge_host_jacobian_registration_source_function" "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_effective_jacobian_actions_synthesized_attr": %s,\n' "$(count_matches "enzymexla.sundials.ida_effective_jacobian_actions_synthesized" "${bridge_selected_mlir}")" >> "${summary}"
