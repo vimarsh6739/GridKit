@@ -179,9 +179,16 @@ marked_attributes.semantic_bridge_runtime_jvp_kernel_adapters_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernels_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernels_linked_attr = 0
 marked_attributes.semantic_bridge_runtime_host_splices_emitted_attr = 1
+marked_attributes.semantic_bridge_runtime_host_splice_dispatchers_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_host_splice_records = 1
 marked_attributes.semantic_bridge_runtime_host_splice_plan_roles = 1
 marked_attributes.semantic_bridge_runtime_host_splice_attrs = 1
+marked_attributes.semantic_bridge_runtime_host_setup_dispatcher_attrs = 1
+marked_attributes.semantic_bridge_runtime_host_teardown_dispatcher_attrs = 1
+marked_attributes.semantic_bridge_runtime_host_setup_dispatcher_functions = 1
+marked_attributes.semantic_bridge_runtime_host_teardown_dispatcher_functions = 1
+marked_attributes.semantic_bridge_runtime_host_setup_dispatch_calls = 1
+marked_attributes.semantic_bridge_runtime_host_teardown_dispatch_calls = 1
 marked_attributes.semantic_bridge_runtime_jactimes_callbacks = 1
 marked_attributes.semantic_bridge_runtime_registrations = 1
 marked_attributes.semantic_bridge_runtime_context_setup_functions = 1
@@ -369,11 +376,18 @@ under the IDA memory owner through
 through an out parameter for immediate callers, and delegates to the generated
 registration helper, plus a teardown helper that takes the IDA memory pointer
 and calls `__enzymexla_sundials_ida_destroy_remembered_jvp_context`. The pass
-also emits a symbolic
+also emits host-facing setup and teardown dispatcher entry points; in the
+single-solve module case these use the stable C symbols
+`__enzymexla_sundials_ida_setup_generated_jactimes` and
+`__enzymexla_sundials_ida_teardown_generated_jactimes`, and otherwise fall
+back to unique generated names. The dispatchers preserve the same host
+provenance and context-input contract and forward to the selected numbered
+setup/teardown helpers. The pass also emits a symbolic
 `enzymexla.sundials.ida_host_splice` plan and points the selected solve at it
 with `enzymexla.sundials.runtime_host_splice`; the plan names the generated
-setup, teardown, registration, JacTimes callback, JVP adapter, and raw JVP
-kernel symbols in one host-rewrite target. The setup, registration, teardown,
+setup, teardown, setup dispatcher, teardown dispatcher, registration, JacTimes
+callback, JVP adapter, and raw JVP kernel symbols in one host-rewrite target.
+The setup, setup dispatcher, registration, teardown, teardown dispatcher,
 JacTimes callback, and host-splice plan now carry
 `enzymexla.sundials.host_linear_solver_source_function` and
 `enzymexla.sundials.host_jacobian_registration_source_function` attributes
@@ -431,14 +445,15 @@ setup call can assemble a temporary pointer array and a temporary out slot
 without leaving the later IDA callback with a dangling array reference or
 requiring a new C++ field just to reach teardown. The remaining executable gap
 is host splicing: lowered code still has to use the recorded context-input
-contract to build the residual input pointer array, call the generated context
-setup helper from the host configuration path, and call the generated teardown
-helper with the IDA memory pointer when the solver no longer needs the
-callback. The setup helper now derives the output size from the IDA `yy`
-template via `N_VGetLength`, so host splicing no longer has to supply that
-operand. If those preconditions fail, the fallback raw kernel is still marked
-`semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
-provenance-matching raw kernels are rejected rather than chosen arbitrarily.
+contract to build the residual input pointer array, call the generated setup
+dispatcher from the host configuration path, and call the generated teardown
+dispatcher with the IDA memory pointer when the solver no longer needs the
+callback. The setup helper underneath the dispatcher now derives the output
+size from the IDA `yy` template via `N_VGetLength`, so host splicing no longer
+has to supply that operand. If those preconditions fail, the fallback raw
+kernel is still marked `semantic_raw_kernel_requires_lowering` and returns a
+nonzero status. Multiple provenance-matching raw kernels are rejected rather
+than chosen arbitrarily.
 
 `--recover-sundials-ida-llvm` is the first generic host-side solver recovery
 pass. It scans imported LLVM dialect host functions for SUNDIALS IDA
@@ -602,7 +617,9 @@ llvm.func @__enzymexla_sundials_ida_register_jactimes_N(
 llvm.func @__enzymexla_sundials_ida_setup_jactimes_N(
     %ida_mem, %yy, %sunctx, %model, %inputs, %input_count,
     %context_out)
-llvm.func @__enzymexla_sundials_ida_teardown_jactimes_N(%user_data)
+llvm.func @__enzymexla_sundials_ida_teardown_jactimes_N(%ida_mem)
+llvm.func @__enzymexla_sundials_ida_setup_generated_jactimes(...)
+llvm.func @__enzymexla_sundials_ida_teardown_generated_jactimes(...)
 llvm.func @SUNLinSol_SPGMR(...)
 llvm.func @IDASetUserData(...)
 llvm.func @IDASetLinearSolver(...)
@@ -625,7 +642,14 @@ marked
 `enzymexla.sundials.callback_context = "ida_jvp_user_data_context"` and calls
 `__enzymexla_sundials_ida_register_jvp_context` before `IDASetUserData`, so
 IDA's `user_data` pointer is the generated JVP context recognized by the
-runtime support library. If the selected action has already been lowered to an
+runtime support library. The solve is also annotated with
+`enzymexla.sundials.runtime_host_setup_dispatcher` and
+`enzymexla.sundials.runtime_host_teardown_dispatcher`, and the
+`enzymexla.sundials.ida_host_splice` plan records matching `setup_dispatcher`
+and `teardown_dispatcher` symbols. In single-solve modules these are stable
+`*_generated_jactimes` entry points suitable for a host rewrite to call
+directly; in multi-solve modules the pass emits unique dispatcher names and
+records them on each plan. If the selected action has already been lowered to an
 LLVM function with the JacTimes ABI, the callback body calls it and is marked
 `enzymexla.sundials.callback_body = "delegates_jvp_kernel"`. If the selected
 action is still semantic, the pass generates
