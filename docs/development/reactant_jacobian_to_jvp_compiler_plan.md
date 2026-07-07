@@ -127,8 +127,12 @@ GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_
 GridKit/build/reactant-jacobian-export/reactant/gridkit_semantic_bridge_runtime_glue_real_sundials_component.log
 GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_derivative.cpp
 GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_derivative.o
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_ida_runtime.cpp
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_ida_runtime.o
 GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_smoke
 GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_jvp_smoke.log
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_ida_sundials_smoke
+GridKit/build/reactant-jacobian-export/reactant/gridkit_systemmodel_layout_ida_sundials_smoke.log
 GridKit/build/reactant-jacobian-export/reactant/genclassical_reactant_import_export.json
 ```
 
@@ -161,11 +165,16 @@ semantic_bridge.runtime_real_sundials_component_run_exit_code = 0
 systemmodel_generated_jvp.derivative_compile_exit_code = 0
 systemmodel_generated_jvp.smoke_compile_exit_code = 0
 systemmodel_generated_jvp.smoke_run_exit_code = 0
+systemmodel_generated_jvp.ida_runtime_compile_exit_code = 0
+systemmodel_generated_jvp.ida_sundials_smoke_compile_exit_code = 0
+systemmodel_generated_jvp.ida_sundials_smoke_run_exit_code = 0
 default_pipeline.exit_code = null
 line_counts.systemmodel_imported_mlir = 52975
 line_counts.systemmodel_marked_mlir = 52992
 line_counts.systemmodel_generated_jvp_derivative_source = 114
+line_counts.systemmodel_generated_jvp_runtime_source = 162
 line_counts.systemmodel_generated_jvp_smoke_harness = 251
+line_counts.systemmodel_generated_jvp_sundials_harness = 137
 matching_lines.gridkit_systemmodel_genclassical_existing_sparse_jacobian = 1
 matching_lines.systemmodel___enzyme_fwddiff = 14
 matching_lines.systemmodel_sparse_store = 10
@@ -301,6 +310,7 @@ marked_attributes.systemmodel_generated_jvp_smoke_success_lines = 1
 marked_attributes.systemmodel_generated_jvp_finite_difference_success_lines = 1
 marked_attributes.systemmodel_generated_jvp_explicit_sparse_success_lines = 1
 marked_attributes.systemmodel_generated_jvp_matrix_free_success_lines = 1
+marked_attributes.systemmodel_generated_jvp_sundials_success_lines = 1
 ```
 
 The generated runtime checks now report:
@@ -309,13 +319,18 @@ The generated runtime checks now report:
 generated real JVP smoke: ok finite_difference=ok matrix_free_oracle=ok explicit_csr_oracle=ok
 generated real SUNDIALS component smoke: ok steps=14 residual_evals=19 nonlinear_iters=17 linear_iters=37 jac_times_evals=37 explicit_jacobian_evals=0
 systemmodel generated JVP smoke: ok finite_difference=ok explicit_sparse_oracle=ok matrix_free_oracle=ok
+generated SystemModel SUNDIALS smoke: ok steps=18 residual_evals=25 nonlinear_iters=23 linear_iters=104 jac_times_evals=104 explicit_jacobian_evals=0
 ```
 
 The `systemmodel generated JVP` line is an aggregate one-bus/one-generator
 SystemModel-layout check over global `y`/`yp` vectors. It validates the
 generated JVP against the `SystemModel` primal residual layout, finite
-differences, explicit sparse `J*v`, and the MatrixFree oracle. It is not yet the
-full generated-JVP `SystemModel` IDA simulation.
+differences, explicit sparse `J*v`, and the MatrixFree oracle. The
+`generated SystemModel SUNDIALS` line then links that generated layout JVP into
+an automatically registered JacTimes adapter and runs a complete
+one-bus/one-generator `Ida<SystemModel>` simulation. The adapter chooses an
+SPGMR Krylov dimension from the IDA `yy` template length; the default SPGMR
+dimension is too small for this seven-variable no-preconditioner smoke.
 
 The marker and action-synthesis passes currently record:
 
@@ -545,10 +560,13 @@ standalone generated-JVP smoke and a real SUNDIALS component-level
 explicit Jacobian evaluations. It also builds a generated aggregate
 SystemModel-layout JVP over global `y`/`yp` vectors and checks that action
 against `SystemModel::evaluateResidual()`, finite differences, explicit sparse
-`J*v`, and the MatrixFree oracle. The remaining executable gaps are replacing
-the script-injected semantic bridge with in-compiler recovery across the actual
-source boundary, splicing the SystemModel-layout action into the solver host
-path, and running the complete generated-JVP `SystemModel` IDA simulation. If
+`J*v`, and the MatrixFree oracle. A second generated SystemModel-layout IDA
+adapter now registers JacTimes automatically, configures SPGMR with a Krylov
+dimension derived from the IDA `yy` template length, and runs a complete
+one-bus/one-generator `Ida<SystemModel>` simulation with JacTimes activity and
+zero explicit Jacobian evaluations. The remaining executable gap is replacing
+the script-injected semantic bridge and SystemModel-layout runtime template
+with in-compiler recovery and lowering across the actual source boundary. If
 those preconditions fail, the
 fallback raw kernel is still marked `semantic_raw_kernel_requires_lowering` and
 returns a nonzero status. Multiple provenance-matching raw kernels are rejected rather
@@ -886,13 +904,14 @@ repeatable artifact path and records the default-pipeline crash separately.
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
    the synthesized Jacobian action records. The current export proves both the
    `SystemModel::evaluateJacobian()` source region raise/mark path and a
-   generated aggregate SystemModel-layout JVP, but the compiler bridge still
-   needs to produce that action from the recovered source boundary.
+   generated aggregate SystemModel-layout JVP/IDA run, but the compiler bridge
+   still needs to produce that action from the recovered source boundary.
 2. Replace the export-only runtime-glue and SystemModel-layout derivative
-   artifacts with a generated object that is linked into a GridKit IDA
-   executable for the selected SystemModel source region.
-3. Run a full GridKit SystemModel IDA simulation through the generated JVP path
-   without requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
+   artifacts with compiler-lowered objects linked into a GridKit IDA executable
+   for the selected SystemModel source region.
+3. Remove the remaining smoke-only SystemModel harness concessions, including
+   the allocation-time sparse-Jacobian bypass, once the compiler path can
+   separate sparsity discovery from solver-time explicit Jacobian evaluation.
 4. Either narrow the Reactant default pipeline around this source region or fix
    the `ReactantNewPM` crash so the marked GridKit path can rejoin the normal
    raising pipeline.
