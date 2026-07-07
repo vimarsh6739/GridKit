@@ -1,6 +1,7 @@
 #include "IdaJvpRuntime.hpp"
 
 #include <mutex>
+#include <new>
 #include <unordered_set>
 
 namespace AnalysisManager
@@ -123,6 +124,36 @@ extern "C" int __enzymexla_sundials_ida_accumulate_raw_jvp(void* user_data,
   }
 
   return 0;
+}
+
+extern "C" void* __enzymexla_sundials_ida_create_jvp_context(void* model,
+                                                              void** inputs,
+                                                              std::int64_t input_count,
+                                                              std::int64_t output_size)
+{
+  using AnalysisManager::Sundials::Runtime::IdaJvpUserData;
+
+  if (input_count < 0 || output_size < 0)
+  {
+    return nullptr;
+  }
+
+  return new (std::nothrow) IdaJvpUserData{
+    model,
+    inputs,
+    static_cast<std::size_t>(input_count),
+    static_cast<std::size_t>(output_size),
+  };
+}
+
+extern "C" void __enzymexla_sundials_ida_destroy_jvp_context(void* user_data)
+{
+  using AnalysisManager::Sundials::Runtime::IdaJvpUserData;
+  using AnalysisManager::Sundials::Runtime::unregisterIdaJvpUserData;
+
+  auto* context = static_cast<IdaJvpUserData*>(user_data);
+  unregisterIdaJvpUserData(context);
+  delete context;
 }
 
 extern "C" void __enzymexla_sundials_ida_register_jvp_context(void* user_data)

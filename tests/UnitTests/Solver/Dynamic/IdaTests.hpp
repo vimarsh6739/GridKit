@@ -426,6 +426,24 @@ namespace GridKit
 
         __enzymexla_sundials_ida_unregister_jvp_context(&context);
 
+        void* generated_context =
+          __enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, 4, 3);
+        success *= (generated_context != nullptr);
+        __enzymexla_sundials_ida_register_jvp_context(generated_context);
+
+        double generated_jv[]  = {4.0, 5.0, 6.0};
+        double generated_tmp[] = {-1.0, 2.0, 0.25};
+        success *= (AnalysisManager::Sundials::Runtime::unwrapIdaUserDataModel(generated_context) == &model_token);
+        success *= (__enzymexla_sundials_ida_context_input(generated_context, 3) == wb);
+        success *= (__enzymexla_sundials_ida_accumulate_raw_jvp(generated_context,
+                                                                 generated_jv,
+                                                                 generated_tmp) == 0);
+        success *= isEqual(generated_jv[0], 3.0);
+        success *= isEqual(generated_jv[1], 7.0);
+        success *= isEqual(generated_jv[2], 6.25);
+        __enzymexla_sundials_ida_destroy_jvp_context(generated_context);
+        success *= (__enzymexla_sundials_ida_create_jvp_context(&model_token, inputs, -1, 3) == nullptr);
+
         return success.report(__func__);
       }
     };

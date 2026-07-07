@@ -172,6 +172,8 @@ marked_attributes.semantic_bridge_runtime_raw_jvp_kernels_emitted_attr = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernels_linked_attr = 0
 marked_attributes.semantic_bridge_runtime_jactimes_callbacks = 1
 marked_attributes.semantic_bridge_runtime_registrations = 1
+marked_attributes.semantic_bridge_runtime_context_setup_functions = 1
+marked_attributes.semantic_bridge_runtime_context_teardown_functions = 1
 marked_attributes.semantic_bridge_runtime_placeholder_callbacks = 0
 marked_attributes.semantic_bridge_runtime_delegating_callbacks = 1
 marked_attributes.semantic_bridge_runtime_jvp_kernel_adapters = 1
@@ -188,8 +190,15 @@ marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_calls = 1
 marked_attributes.semantic_bridge_runtime_context_input_declarations = 1
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_declarations = 1
 marked_attributes.semantic_bridge_runtime_context_registration_calls = 1
+marked_attributes.semantic_bridge_runtime_context_registration_helper_calls = 1
 marked_attributes.semantic_bridge_runtime_context_registration_declarations = 1
+marked_attributes.semantic_bridge_runtime_context_create_calls = 1
+marked_attributes.semantic_bridge_runtime_context_destroy_calls = 1
+marked_attributes.semantic_bridge_runtime_context_create_declarations = 1
+marked_attributes.semantic_bridge_runtime_context_destroy_declarations = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernel_attrs = 1
+marked_attributes.semantic_bridge_runtime_context_setup_attrs = 1
+marked_attributes.semantic_bridge_runtime_context_teardown_attrs = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernel_attrs = 0
 marked_attributes.semantic_bridge_runtime_nvector_data_access_calls = 7
 marked_attributes.semantic_bridge_runtime_yp_tangent_scale_calls = 1
@@ -316,7 +325,12 @@ symbol, SUNDIALS declarations, and a registration helper that constructs
 `SUNLinSol_SPGMR`, registers the generated JVP context with
 `__enzymexla_sundials_ida_register_jvp_context`, calls `IDASetUserData`, calls
 `IDASetLinearSolver`, and registers the callback with `IDASetJacTimes`. The
-registration helper is marked with
+same pass now also emits a host-facing context setup helper that calls
+`__enzymexla_sundials_ida_create_jvp_context`, stores the resulting context
+pointer through an out parameter, and delegates to the generated registration
+helper, plus a teardown helper that calls
+`__enzymexla_sundials_ida_destroy_jvp_context`. The registration helper is
+marked with
 `enzymexla.sundials.callback_context = "ida_jvp_user_data_context"`, making the
 fourth helper argument an explicit reusable `IdaJvpUserData` context pointer
 rather than an untyped model pointer. The generated callback currently carries
@@ -351,13 +365,15 @@ passes the IDA vector `v` as the `y` tangent, passes `tmp1Data` as the
 `__enzymexla_sundials_ida_accumulate_raw_jvp`. Non-SUNDIALS residual inputs are
 loaded through `__enzymexla_sundials_ida_context_input(user_data, index)`.
 GridKit now provides a reusable `IdaJvpUserData` support layer with C ABI entry
-points for registering generated callback contexts, unwrapping the original
-model pointer for legacy residual/Jacobian callbacks, accessing context inputs,
-and accumulating the y/yp JVP contributions. The remaining executable gap is
-host splicing: lowered code still has to construct an `IdaJvpUserData` object,
-pass it into the generated `IDASetJacTimes` helper, and emit teardown through
-`__enzymexla_sundials_ida_unregister_jvp_context`. If those preconditions fail,
-the fallback raw kernel is still marked
+points for creating, registering, destroying, and discovering generated callback
+contexts, unwrapping the original model pointer for legacy residual/Jacobian
+callbacks, accessing context inputs, and accumulating the y/yp JVP
+contributions. The remaining executable gap is host splicing: lowered code
+still has to build the residual input pointer array and output-size operands,
+call the generated context setup helper from the host configuration path, keep
+the returned context pointer alive for IDA, and call the generated teardown
+helper when the solver no longer needs the callback. If those preconditions
+fail, the fallback raw kernel is still marked
 `semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
 provenance-matching raw kernels are rejected rather than chosen arbitrarily.
 
@@ -512,6 +528,10 @@ llvm.func @__enzymexla_sundials_ida_jvp_kernel_N(...)
 llvm.func @__enzymexla_sundials_ida_raw_jvp_kernel_N(...)
 llvm.func @__enzymexla_sundials_ida_register_jactimes_N(
     %ida_mem, %yy, %sunctx, %user_data)
+llvm.func @__enzymexla_sundials_ida_setup_jactimes_N(
+    %ida_mem, %yy, %sunctx, %model, %inputs, %input_count,
+    %output_size, %context_out)
+llvm.func @__enzymexla_sundials_ida_teardown_jactimes_N(%user_data)
 llvm.func @SUNLinSol_SPGMR(...)
 llvm.func @IDASetUserData(...)
 llvm.func @IDASetLinearSolver(...)
@@ -519,11 +539,17 @@ llvm.func @IDASetJacTimes(...)
 llvm.func @N_VGetArrayPointer(...)
 llvm.func @N_VScale(...)
 llvm.func @__enzymexla_sundials_ida_register_jvp_context(...)
+llvm.func @__enzymexla_sundials_ida_create_jvp_context(...)
+llvm.func @__enzymexla_sundials_ida_destroy_jvp_context(...)
 ```
 
 The solve is annotated with `enzymexla.sundials.runtime_jactimes_callback` and
 `enzymexla.sundials.runtime_registration`. This is generated callback and
-registration machinery. The registration helper is marked
+registration machinery. It is also annotated with
+`enzymexla.sundials.runtime_context_setup` and
+`enzymexla.sundials.runtime_context_teardown`, which name generated host-facing
+lifecycle helpers for the `IdaJvpUserData` context. The registration helper is
+marked
 `enzymexla.sundials.callback_context = "ida_jvp_user_data_context"` and calls
 `__enzymexla_sundials_ida_register_jvp_context` before `IDASetUserData`, so
 IDA's `user_data` pointer is the generated JVP context recognized by the
@@ -547,6 +573,8 @@ IDA residual with `y` and optional `yp` active inputs. The generated raw kernel
 uses `enzyme_fwddiff_raw_buffer_calls`, `ida_raw_jvp_context_input`, and
 `ida_raw_jvp_accumulate` roles. GridKit's `IdaJvpRuntime` now defines the
 corresponding C symbols:
+`__enzymexla_sundials_ida_create_jvp_context`,
+`__enzymexla_sundials_ida_destroy_jvp_context`,
 `__enzymexla_sundials_ida_register_jvp_context`,
 `__enzymexla_sundials_ida_unregister_jvp_context`,
 `__enzymexla_sundials_ida_context_input`, and
@@ -661,13 +689,11 @@ repeatable artifact path and records the default-pipeline crash separately.
    in-compiler bridge from GridKit's recovered `Ida::Jac` callback semantics to
    the synthesized Jacobian action records, or raise both source regions in one
    artifact so no overlay is needed.
-2. Lower construction, registration, and teardown of an `IdaJvpUserData`
-   callback context so the generated `IDASetJacTimes` helper receives model,
-   residual input, and output-size metadata automatically.
-3. Splice the generated registration helper into the host executable path, or
-   lower the semantic solve to a host call site that invokes it automatically.
-4. Run a full GridKit IDA simulation through the generated JVP path without
+2. Splice the generated context setup and teardown helpers into the host
+   executable path, including model, residual input-array, output-size, and
+   context-lifetime plumbing.
+3. Run a full GridKit IDA simulation through the generated JVP path without
    requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
-5. Either narrow the Reactant default pipeline around this source region or fix
+4. Either narrow the Reactant default pipeline around this source region or fix
    the `ReactantNewPM` crash so the marked GridKit path can rejoin the normal
    raising pipeline.

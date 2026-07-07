@@ -42,6 +42,13 @@ extern "C" int __enzymexla_sundials_ida_accumulate_raw_jvp(void* user_data,
                                                             void* jv,
                                                             void* tmp);
 
+extern "C" void* __enzymexla_sundials_ida_create_jvp_context(void* model,
+                                                              void** inputs,
+                                                              std::int64_t input_count,
+                                                              std::int64_t output_size);
+
+extern "C" void __enzymexla_sundials_ida_destroy_jvp_context(void* user_data);
+
 extern "C" void __enzymexla_sundials_ida_register_jvp_context(void* user_data);
 
 extern "C" void __enzymexla_sundials_ida_unregister_jvp_context(void* user_data);
