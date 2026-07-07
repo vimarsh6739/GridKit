@@ -113,6 +113,38 @@ namespace
 
     return success.report(__func__);
   }
+
+  GridKit::Testing::TestOutcome compilerGeneratedIdaHostSpliceMissingInputFallback()
+  {
+    using AnalysisManager::Sundials::Ida;
+    using AnalysisManager::Sundials::Runtime::collectGeneratedIdaJvpInputs;
+    using AnalysisManager::Sundials::Runtime::hasGeneratedIdaJvpHostSplice;
+
+    GridKit::Testing::TestStatus success = true;
+
+    GridKit::Model::NullEvaluator<double, size_t> model;
+
+    generated_ida_hook_test_state.reset();
+    generated_ida_hook_test_state.enabled        = true;
+    generated_ida_hook_test_state.expected_model = &model;
+
+    success *= hasGeneratedIdaJvpHostSplice();
+    std::vector<void*> inputs =
+      collectGeneratedIdaJvpInputs(&model, &resolveGeneratedJvpInputForTestModel);
+    success *= inputs.empty();
+
+    {
+      Ida<double, size_t> ida(&model);
+      success *= (ida.configureSimulation() == 0);
+      success *= (!ida.generatedJvpConfigured());
+      success *= (generated_ida_hook_test_state.setup_calls == 0);
+    }
+
+    success *= (generated_ida_hook_test_state.teardown_calls == 0);
+    generated_ida_hook_test_state.reset();
+
+    return success.report(__func__);
+  }
 } // namespace
 
 extern "C" int __enzymexla_sundials_ida_setup_generated_jactimes(void* ida_mem,
@@ -200,6 +232,7 @@ int main()
   result += test.suppressAlgebraicErrors();
   result += test.compilerGeneratedJvpUserData();
   result += compilerGeneratedIdaHostSplice();
+  result += compilerGeneratedIdaHostSpliceMissingInputFallback();
 
   return result.summary();
 }
