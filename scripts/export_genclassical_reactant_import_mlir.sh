@@ -10,6 +10,7 @@ src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GenClassicalSpa
 ida_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GridKitIdaSparseHostHarness.cpp"
 runtime_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRuntimeGlueSmokeHarness.cpp"
 runtime_real_smoke_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRealJvpSmokeHarness.cpp"
+runtime_real_sundials_component_src="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/GeneratedIdaRealSundialsComponentHarness.cpp"
 
 reactant_root="${REACTANT_ROOT:-${workspace_root}/Reactant/enzyme}"
 reactant_cxx="${REACTANT_CXX:-${reactant_root}/bazel-bin/reactant-clang++}"
@@ -24,8 +25,14 @@ derivative_resource_dir="${GRIDKIT_REACTANT_ENZYME_RESOURCE_DIR:-}"
 resource_dir="${REACTANT_RESOURCE_DIR:-}"
 gridkit_build_include="${GRIDKIT_REACTANT_GRIDKIT_BUILD_INCLUDE:-${gridkit_root}/build/gridkit-enzyme-jvp-wrapper}"
 sparse_matrix_lib="${GRIDKIT_REACTANT_SPARSE_MATRIX_LIB:-${gridkit_build_include}/GridKit/LinearAlgebra/SparseMatrix/libgridkit_sparse_matrix.so}"
+sundials_gridkit_build="${GRIDKIT_REACTANT_SUNDIALS_GRIDKIT_BUILD:-${gridkit_root}/build/gridkit-sundials-local}"
+sundials_install="${GRIDKIT_REACTANT_SUNDIALS_INSTALL:-${gridkit_root}/build/deps/sundials-install}"
+sundials_solvers_lib="${GRIDKIT_REACTANT_SUNDIALS_SOLVERS_LIB:-${sundials_gridkit_build}/GridKit/Solver/Dynamic/libgridkit_solvers_dyn.so}"
+sundials_sparse_matrix_lib="${GRIDKIT_REACTANT_SUNDIALS_SPARSE_MATRIX_LIB:-${sundials_gridkit_build}/GridKit/LinearAlgebra/SparseMatrix/libgridkit_sparse_matrix.so}"
+suitesparse_include="${GRIDKIT_REACTANT_SUITESPARSE_INCLUDE:-/usr/include/suitesparse}"
 sundials_shim_include="${gridkit_root}/examples/Experimental/ReactantJacobianRaise/sundials_shim/include"
 export_ida_host="${GRIDKIT_REACTANT_EXPORT_IDA_HOST:-1}"
+run_real_sundials_smoke="${GRIDKIT_REACTANT_REAL_SUNDIALS_SMOKE:-1}"
 
 imported_mlir="${out_dir}/genclassical_reactant_imported.mlir"
 printed_mlir="${out_dir}/genclassical_reactant_roundtrip_input.mlir"
@@ -68,6 +75,8 @@ bridge_generated_derivative_compile_log="${out_dir}/gridkit_generated_ida_jvp_de
 bridge_generated_derivative_rename_log="${out_dir}/gridkit_generated_ida_jvp_derivative_rename.log"
 bridge_runtime_real_smoke_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke"
 bridge_runtime_real_smoke_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_jvp_smoke.log"
+bridge_runtime_real_sundials_component_exe="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_sundials_component"
+bridge_runtime_real_sundials_component_log="${out_dir}/gridkit_semantic_bridge_runtime_glue_real_sundials_component.log"
 
 default_imported_mlir="${out_dir}/genclassical_reactant_default_imported.mlir"
 default_object_file="${out_dir}/genclassical_reactant_default.o"
@@ -310,6 +319,10 @@ bridge_runtime_real_smoke_attempted="false"
 bridge_runtime_real_smoke_skipped_reason=""
 bridge_runtime_real_smoke_compile_status=""
 bridge_runtime_real_smoke_run_status=""
+bridge_runtime_real_sundials_component_attempted="false"
+bridge_runtime_real_sundials_component_skipped_reason=""
+bridge_runtime_real_sundials_component_compile_status=""
+bridge_runtime_real_sundials_component_run_status=""
 if [[ -x "${enzymexlamlir_opt}" && -f "${marked_mlir}" &&
       -f "${ida_marked_mlir}" ]]; then
   materialization_line="$(first_matching_regex "enzymexla\\.jacobian_materialization .*source = \"DfDy\"" "${marked_mlir}")"
@@ -565,6 +578,71 @@ DERIVATIVE_EOF
                     bridge_runtime_real_smoke_run_status=$?
                     set -e
                   fi
+
+                  sundials_solver_lib_dir="$(dirname "${sundials_solvers_lib}")"
+                  sundials_sparse_matrix_lib_dir="$(dirname "${sundials_sparse_matrix_lib}")"
+                  if [[ "${run_real_sundials_smoke}" != "1" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="disabled by GRIDKIT_REACTANT_REAL_SUNDIALS_SMOKE"
+                  elif [[ ! -f "${runtime_real_sundials_component_src}" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="generated real SUNDIALS component harness not found"
+                  elif [[ -z "${runtime_smoke_cxx}" || ! -x "${runtime_smoke_cxx}" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="C++ compiler not found; set GRIDKIT_REACTANT_RUNTIME_SMOKE_CXX or CXX"
+                  elif [[ ! -f "${sundials_gridkit_build}/GridKit/Definitions.hpp" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="SUNDIALS-enabled GridKit Definitions.hpp not found; set GRIDKIT_REACTANT_SUNDIALS_GRIDKIT_BUILD"
+                  elif [[ ! -f "${sundials_install}/include/sundials/sundials_config.h" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="SUNDIALS install include tree not found; set GRIDKIT_REACTANT_SUNDIALS_INSTALL"
+                  elif [[ ! -f "${suitesparse_include}/klu.h" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="SuiteSparse KLU headers not found; set GRIDKIT_REACTANT_SUITESPARSE_INCLUDE"
+                  elif [[ ! -f "${sundials_solvers_lib}" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="GridKit SUNDIALS solver library not found; set GRIDKIT_REACTANT_SUNDIALS_SOLVERS_LIB"
+                  elif [[ ! -f "${sundials_sparse_matrix_lib}" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="GridKit SUNDIALS sparse matrix library not found; set GRIDKIT_REACTANT_SUNDIALS_SPARSE_MATRIX_LIB"
+                  elif [[ ! -f "${sundials_install}/lib/libsundials_idas.so" ||
+                          ! -f "${sundials_install}/lib/libsundials_nvecserial.so" ||
+                          ! -f "${sundials_install}/lib/libsundials_sunlinsolspgmr.so" ||
+                          ! -f "${sundials_install}/lib/libsundials_core.so" ]]; then
+                    bridge_runtime_real_sundials_component_skipped_reason="required SUNDIALS shared libraries not found under GRIDKIT_REACTANT_SUNDIALS_INSTALL"
+                  else
+                    bridge_runtime_real_sundials_component_attempted="true"
+                    set +e
+                    "${runtime_smoke_cxx}" -std=c++20 -O0 -g -pthread \
+                      -I"${sundials_gridkit_build}" \
+                      -I"${gridkit_root}" \
+                      -I"${gridkit_root}/third-party/magic-enum/include" \
+                      -I"${sundials_install}/include" \
+                      -I"${suitesparse_include}" \
+                      "${runtime_real_sundials_component_src}" \
+                      "${bridge_runtime_object}" \
+                      "${bridge_generated_derivative_object}" \
+                      "${sundials_solvers_lib}" \
+                      "${sundials_sparse_matrix_lib}" \
+                      "${sundials_install}/lib/libsundials_idas.so" \
+                      "${sundials_install}/lib/libsundials_nvecserial.so" \
+                      -Wl,--no-as-needed \
+                      "${sundials_install}/lib/libsundials_sunlinsolspgmr.so" \
+                      -Wl,--as-needed \
+                      "${sundials_install}/lib/libsundials_core.so" \
+                      -Wl,-rpath,"${sundials_solver_lib_dir}" \
+                      -Wl,-rpath,"${sundials_sparse_matrix_lib_dir}" \
+                      -Wl,-rpath,"${sundials_install}/lib" \
+                      -Wl,--export-dynamic-symbol=__enzymexla_sundials_ida_setup_generated_jactimes \
+                      -Wl,--export-dynamic-symbol=__enzymexla_sundials_ida_teardown_generated_jactimes \
+                      -Wl,--export-dynamic-symbol=__enzymexla_sundials_ida_fill_generated_jvp_inputs \
+                      -Wl,--gc-sections \
+                      -no-pie -lm \
+                      -o "${bridge_runtime_real_sundials_component_exe}" \
+                      > "${bridge_runtime_real_sundials_component_log}" 2>&1
+                    bridge_runtime_real_sundials_component_compile_status=$?
+                    set -e
+
+                    if [[ "${bridge_runtime_real_sundials_component_compile_status}" -eq 0 ]]; then
+                      set +e
+                      "${bridge_runtime_real_sundials_component_exe}" \
+                        >> "${bridge_runtime_real_sundials_component_log}" 2>&1
+                      bridge_runtime_real_sundials_component_run_status=$?
+                      set -e
+                    fi
+                  fi
                 fi
               fi
             fi
@@ -671,6 +749,16 @@ if [[ -n "${bridge_runtime_real_smoke_run_status}" ]]; then
 else
   bridge_runtime_real_smoke_run_exit_json="null"
 fi
+if [[ -n "${bridge_runtime_real_sundials_component_compile_status}" ]]; then
+  bridge_runtime_real_sundials_component_compile_exit_json="${bridge_runtime_real_sundials_component_compile_status}"
+else
+  bridge_runtime_real_sundials_component_compile_exit_json="null"
+fi
+if [[ -n "${bridge_runtime_real_sundials_component_run_status}" ]]; then
+  bridge_runtime_real_sundials_component_run_exit_json="${bridge_runtime_real_sundials_component_run_status}"
+else
+  bridge_runtime_real_sundials_component_run_exit_json="null"
+fi
 if [[ -n "${default_status}" ]]; then
   default_exit_json="${default_status}"
 else
@@ -741,6 +829,11 @@ printf '    "runtime_real_smoke_attempted": %s,\n' "${bridge_runtime_real_smoke_
 printf '    "runtime_real_smoke_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_real_smoke_skipped_reason}")" >> "${summary}"
 printf '    "runtime_real_smoke_compile_exit_code": %s,\n' "${bridge_runtime_real_smoke_compile_exit_json}" >> "${summary}"
 printf '    "runtime_real_smoke_run_exit_code": %s,\n' "${bridge_runtime_real_smoke_run_exit_json}" >> "${summary}"
+printf '    "runtime_real_sundials_component_attempted": %s,\n' "${bridge_runtime_real_sundials_component_attempted}" >> "${summary}"
+printf '    "runtime_real_sundials_component_enabled": %s,\n' "$([[ "${run_real_sundials_smoke}" == "1" ]] && printf true || printf false)" >> "${summary}"
+printf '    "runtime_real_sundials_component_skipped_reason": %s,\n' "$(json_string "${bridge_runtime_real_sundials_component_skipped_reason}")" >> "${summary}"
+printf '    "runtime_real_sundials_component_compile_exit_code": %s,\n' "${bridge_runtime_real_sundials_component_compile_exit_json}" >> "${summary}"
+printf '    "runtime_real_sundials_component_run_exit_code": %s,\n' "${bridge_runtime_real_sundials_component_run_exit_json}" >> "${summary}"
 printf '    "input_mlir": %s,\n' "$(json_string "${bridge_mlir}")" >> "${summary}"
 printf '    "selected_mlir": %s,\n' "$(json_string "${bridge_selected_mlir}")" >> "${summary}"
 printf '    "runtime_mlir": %s,\n' "$(json_string "${bridge_runtime_mlir}")" >> "${summary}"
@@ -756,7 +849,14 @@ printf '    "generated_derivative_named_object": %s,\n' "$(json_string "${bridge
 printf '    "generated_derivative_object": %s,\n' "$(json_string "${bridge_generated_derivative_object}")" >> "${summary}"
 printf '    "runtime_real_smoke_executable": %s,\n' "$(json_string "${bridge_runtime_real_smoke_exe}")" >> "${summary}"
 printf '    "runtime_real_smoke_harness": %s,\n' "$(json_string "${runtime_real_smoke_src}")" >> "${summary}"
+printf '    "runtime_real_sundials_component_executable": %s,\n' "$(json_string "${bridge_runtime_real_sundials_component_exe}")" >> "${summary}"
+printf '    "runtime_real_sundials_component_harness": %s,\n' "$(json_string "${runtime_real_sundials_component_src}")" >> "${summary}"
 printf '    "sparse_matrix_lib": %s,\n' "$(json_string "${sparse_matrix_lib}")" >> "${summary}"
+printf '    "sundials_gridkit_build": %s,\n' "$(json_string "${sundials_gridkit_build}")" >> "${summary}"
+printf '    "sundials_install": %s,\n' "$(json_string "${sundials_install}")" >> "${summary}"
+printf '    "sundials_solvers_lib": %s,\n' "$(json_string "${sundials_solvers_lib}")" >> "${summary}"
+printf '    "sundials_sparse_matrix_lib": %s,\n' "$(json_string "${sundials_sparse_matrix_lib}")" >> "${summary}"
+printf '    "suitesparse_include": %s,\n' "$(json_string "${suitesparse_include}")" >> "${summary}"
 printf '    "mlir_translate": %s,\n' "$(json_string "${mlir_translate}")" >> "${summary}"
 printf '    "llc": %s,\n' "$(json_string "${llc_tool}")" >> "${summary}"
 printf '    "llvm_nm": %s,\n' "$(json_string "${llvm_nm_tool}")" >> "${summary}"
@@ -772,7 +872,8 @@ printf '    "runtime_object_log": %s,\n' "$(json_string "${bridge_runtime_object
 printf '    "runtime_smoke_log": %s,\n' "$(json_string "${bridge_runtime_smoke_log}")" >> "${summary}"
 printf '    "generated_derivative_compile_log": %s,\n' "$(json_string "${bridge_generated_derivative_compile_log}")" >> "${summary}"
 printf '    "generated_derivative_rename_log": %s,\n' "$(json_string "${bridge_generated_derivative_rename_log}")" >> "${summary}"
-printf '    "runtime_real_smoke_log": %s\n' "$(json_string "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "runtime_real_smoke_log": %s,\n' "$(json_string "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "runtime_real_sundials_component_log": %s\n' "$(json_string "${bridge_runtime_real_sundials_component_log}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "default_pipeline": {\n' >> "${summary}"
 printf '    "attempted": %s,\n' "$([[ "${try_default}" == "1" ]] && printf true || printf false)" >> "${summary}"
@@ -793,7 +894,8 @@ printf '    "semantic_bridge_selected_mlir": %s,\n' "$(count_lines "${bridge_sel
 printf '    "semantic_bridge_runtime_mlir": %s,\n' "$(count_lines "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_mlir": %s,\n' "$(count_lines "${bridge_runtime_llvm_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_llvm_ir": %s,\n' "$(count_lines "${bridge_runtime_llvm_ir}")" >> "${summary}"
-printf '    "semantic_bridge_generated_derivative_source": %s\n' "$(count_lines "${bridge_generated_derivative_src}")" >> "${summary}"
+printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(count_lines "${bridge_generated_derivative_src}")" >> "${summary}"
+printf '    "semantic_bridge_real_sundials_component_harness": %s\n' "$(count_lines "${runtime_real_sundials_component_src}")" >> "${summary}"
 printf '  },\n' >> "${summary}"
 printf '  "matching_lines": {\n' >> "${summary}"
 printf '    "__enzyme_fwddiff": %s,\n' "$(count_matches "__enzyme_fwddiff" "${printed_mlir}")" >> "${summary}"
@@ -921,6 +1023,7 @@ printf '    "semantic_bridge_runtime_object_jactimes_symbols": %s,\n' "$(count_m
 printf '    "semantic_bridge_runtime_object_raw_jvp_symbols": %s,\n' "$(count_matches "__enzymexla_sundials_ida_raw_jvp_kernel_" "${bridge_runtime_symbols}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_smoke_success_lines": %s,\n' "$(count_matches "generated runtime glue smoke: ok" "${bridge_runtime_smoke_log}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_real_smoke_success_lines": %s,\n' "$(count_matches "generated real JVP smoke: ok" "${bridge_runtime_real_smoke_log}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_sundials_component_success_lines": %s,\n' "$(count_matches "generated real SUNDIALS component smoke: ok" "${bridge_runtime_real_sundials_component_log}")" >> "${summary}"
 printf '    "gridkit_runtime_evaluator_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/Evaluator.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_component_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/Component.hpp")" >> "${summary}"
 printf '    "gridkit_runtime_genclassical_generated_jvp_input_hooks": %s,\n' "$(count_matches "generatedJvpInput" "${gridkit_root}/GridKit/Model/PhasorDynamics/SynchronousMachine/GenClassical/GenClassical.hpp")" >> "${summary}"
@@ -979,7 +1082,8 @@ printf '    "semantic_bridge_runtime_undefined_symbols": %s,\n' "$(json_string "
 printf '    "semantic_bridge_runtime_smoke_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_smoke_exe}")")" >> "${summary}"
 printf '    "semantic_bridge_generated_derivative_source": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_src}")")" >> "${summary}"
 printf '    "semantic_bridge_generated_derivative_object": %s,\n' "$(json_string "$(file_sha256 "${bridge_generated_derivative_object}")")" >> "${summary}"
-printf '    "semantic_bridge_runtime_real_smoke_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_smoke_exe}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_smoke_executable": %s,\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_smoke_exe}")")" >> "${summary}"
+printf '    "semantic_bridge_runtime_real_sundials_component_executable": %s\n' "$(json_string "$(file_sha256 "${bridge_runtime_real_sundials_component_exe}")")" >> "${summary}"
 printf '  }\n' >> "${summary}"
 printf '}\n' >> "${summary}"
 
@@ -1039,6 +1143,12 @@ if [[ -f "${bridge_runtime_real_smoke_exe}" ]]; then
 fi
 if [[ -f "${bridge_runtime_real_smoke_log}" ]]; then
   echo "wrote ${bridge_runtime_real_smoke_log}"
+fi
+if [[ -f "${bridge_runtime_real_sundials_component_exe}" ]]; then
+  echo "wrote ${bridge_runtime_real_sundials_component_exe}"
+fi
+if [[ -f "${bridge_runtime_real_sundials_component_log}" ]]; then
+  echo "wrote ${bridge_runtime_real_sundials_component_log}"
 fi
 echo "wrote ${summary}"
 
@@ -1127,6 +1237,18 @@ if [[ -n "${bridge_runtime_real_smoke_run_status}" &&
       "${bridge_runtime_real_smoke_run_status}" -ne 0 ]]; then
   echo "GridKit semantic bridge real JVP smoke run failed; see ${bridge_runtime_real_smoke_log}" >&2
   exit "${bridge_runtime_real_smoke_run_status}"
+fi
+
+if [[ -n "${bridge_runtime_real_sundials_component_compile_status}" &&
+      "${bridge_runtime_real_sundials_component_compile_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge real SUNDIALS component smoke compile failed; see ${bridge_runtime_real_sundials_component_log}" >&2
+  exit "${bridge_runtime_real_sundials_component_compile_status}"
+fi
+
+if [[ -n "${bridge_runtime_real_sundials_component_run_status}" &&
+      "${bridge_runtime_real_sundials_component_run_status}" -ne 0 ]]; then
+  echo "GridKit semantic bridge real SUNDIALS component smoke run failed; see ${bridge_runtime_real_sundials_component_log}" >&2
+  exit "${bridge_runtime_real_sundials_component_run_status}"
 fi
 
 if [[ -n "${default_status}" && "${default_status}" -ne 0 ]]; then
