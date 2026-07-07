@@ -11,6 +11,7 @@ int main()
   result += test.callback();
   result += test.fixedStep();
   result += test.suppressAlgebraicErrors();
+  result += test.compilerGeneratedJvpUserData();
 
   return result.summary();
 }

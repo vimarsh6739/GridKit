@@ -1,5 +1,6 @@
 
 #include "Ida.hpp"
+#include "IdaJvpRuntime.hpp"
 
 #include <iomanip>
 #include <iostream>
@@ -721,7 +722,8 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::Residual(RealT tres, N_Vector yy, N_Vector yp, N_Vector rr, void* user_data)
     {
-      GridKit::Model::Evaluator<ScalarT, IdxT>* model = static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(user_data);
+      GridKit::Model::Evaluator<ScalarT, IdxT>* model =
+        static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(Runtime::unwrapIdaUserDataModel(user_data));
 
       copyVec(yy, model->y());
       copyVec(yp, model->yp());
@@ -745,7 +747,8 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::Jac(RealT t, RealT cj, N_Vector yy, N_Vector yp, N_Vector, SUNMatrix J, void* user_data, N_Vector, N_Vector, N_Vector)
     {
-      GridKit::Model::Evaluator<ScalarT, IdxT>* model = static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(user_data);
+      GridKit::Model::Evaluator<ScalarT, IdxT>* model =
+        static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(Runtime::unwrapIdaUserDataModel(user_data));
 
       copyVec(yy, model->y());
       copyVec(yp, model->yp());
@@ -787,7 +790,8 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::Integrand(RealT tt, N_Vector yy, N_Vector yp, N_Vector rhsQ, void* user_data)
     {
-      GridKit::Model::Evaluator<ScalarT, IdxT>* model = static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(user_data);
+      GridKit::Model::Evaluator<ScalarT, IdxT>* model =
+        static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(Runtime::unwrapIdaUserDataModel(user_data));
 
       copyVec(yy, model->y());
       copyVec(yp, model->yp());
@@ -809,7 +813,8 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::adjointResidual(RealT tt, N_Vector yy, N_Vector yp, N_Vector yyB, N_Vector ypB, N_Vector rrB, void* user_data)
     {
-      GridKit::Model::Evaluator<ScalarT, IdxT>* model = static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(user_data);
+      GridKit::Model::Evaluator<ScalarT, IdxT>* model =
+        static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(Runtime::unwrapIdaUserDataModel(user_data));
 
       copyVec(yy, model->y());
       copyVec(yp, model->yp());
@@ -833,7 +838,8 @@ namespace AnalysisManager
     template <class ScalarT, typename IdxT>
     int Ida<ScalarT, IdxT>::adjointIntegrand(RealT tt, N_Vector yy, N_Vector yp, N_Vector yyB, N_Vector ypB, N_Vector rhsQB, void* user_data)
     {
-      GridKit::Model::Evaluator<ScalarT, IdxT>* model = static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(user_data);
+      GridKit::Model::Evaluator<ScalarT, IdxT>* model =
+        static_cast<GridKit::Model::Evaluator<ScalarT, IdxT>*>(Runtime::unwrapIdaUserDataModel(user_data));
 
       copyVec(yy, model->y());
       copyVec(yp, model->yp());

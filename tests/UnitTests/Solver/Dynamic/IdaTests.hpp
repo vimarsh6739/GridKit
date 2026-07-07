@@ -2,6 +2,7 @@
 
 #include <GridKit/Model/Evaluator.hpp>
 #include <GridKit/Solver/Dynamic/Ida.hpp>
+#include <GridKit/Solver/Dynamic/IdaJvpRuntime.hpp>
 #include <GridKit/Testing/TestHelpers.hpp>
 #include <GridKit/Testing/Testing.hpp>
 
@@ -386,6 +387,44 @@ namespace GridKit
         const auto suppressed_steps   = countSteps(true);
 
         success *= (suppressed_steps < unsuppressed_steps);
+
+        return success.report(__func__);
+      }
+
+      TestOutcome compilerGeneratedJvpUserData()
+      {
+        TestStatus success = true;
+
+        double model_token = 42.0;
+        double wb[]        = {1.25, -0.5};
+        void*  inputs[]    = {&model_token, nullptr, nullptr, wb};
+        double jv[]        = {1.0, 2.0, 3.0};
+        double tmp[]       = {0.5, 1.5, -2.0};
+
+        AnalysisManager::Sundials::Runtime::IdaJvpUserData context{
+          &model_token,
+          inputs,
+          4,
+          3,
+        };
+        __enzymexla_sundials_ida_register_jvp_context(&context);
+
+        success *= (AnalysisManager::Sundials::Runtime::unwrapIdaUserDataModel(&context) == &model_token);
+        success *= (AnalysisManager::Sundials::Runtime::unwrapIdaUserDataModel(&model_token) == &model_token);
+        success *= (__enzymexla_sundials_ida_context_input(&context, 0) == &model_token);
+        success *= (__enzymexla_sundials_ida_context_input(&context, 3) == wb);
+        success *= (__enzymexla_sundials_ida_context_input(&context, 4) == nullptr);
+        success *= (__enzymexla_sundials_ida_context_input(&model_token, 0) == &model_token);
+        success *= (__enzymexla_sundials_ida_context_input(&model_token, 3) == nullptr);
+
+        const int status = __enzymexla_sundials_ida_accumulate_raw_jvp(&context, jv, tmp);
+        success *= (status == 0);
+        success *= isEqual(jv[0], 1.5);
+        success *= isEqual(jv[1], 3.5);
+        success *= isEqual(jv[2], 1.0);
+        success *= (__enzymexla_sundials_ida_accumulate_raw_jvp(&model_token, jv, tmp) != 0);
+
+        __enzymexla_sundials_ida_unregister_jvp_context(&context);
 
         return success.report(__func__);
       }

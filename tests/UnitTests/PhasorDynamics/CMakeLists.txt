@@ -123,6 +123,20 @@ target_link_libraries(
   GridKit::phasor_dynamics_bus_dependency_tracking
   GridKit::testing)
 
+if(GRIDKIT_ENABLE_ENZYME)
+  add_executable(test_phasor_gen_classical_matrix_free_jvp runGenClassicalMatrixFreeJvpTests.cpp)
+  target_link_libraries(
+    test_phasor_gen_classical_matrix_free_jvp
+    GridKit::definitions
+    GridKit::phasor_dynamics_core
+    GridKit::testing
+    ClangEnzymeFlags)
+  target_include_directories(
+    test_phasor_gen_classical_matrix_free_jvp
+    PRIVATE ${GRIDKIT_THIRD_PARTY_DIR}/magic-enum/include)
+  target_compile_options(test_phasor_gen_classical_matrix_free_jvp PRIVATE -fno-math-errno)
+endif()
+
 add_executable(test_phasor_system runSystemTests.cpp)
 target_link_libraries(
   test_phasor_system
@@ -151,6 +165,9 @@ add_test(NAME PhasorDynamicsGensalTest COMMAND test_phasor_gensal)
 add_test(NAME PhasorDynamicsExciterSexsPtiTest COMMAND test_phasor_exciter_sexspti)
 add_test(NAME PhasorDynamicsStabilizerIeeestTest COMMAND test_phasor_stabilizer_ieeest)
 add_test(NAME PhasorDynamicsGenClassicalTest COMMAND test_phasor_gen_classical)
+if(GRIDKIT_ENABLE_ENZYME)
+  add_test(NAME PhasorDynamicsGenClassicalMatrixFreeJvpTest COMMAND test_phasor_gen_classical_matrix_free_jvp)
+endif()
 add_test(NAME PhasorDynamicsLoadZTest COMMAND test_phasor_loadz)
 add_test(NAME PhasorDynamicsLoadZIPTest COMMAND test_phasor_loadzip)
 add_test(
