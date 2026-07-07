@@ -503,6 +503,8 @@ printf '    "semantic_bridge_runtime_context_input_calls": %s,\n' "$(count_match
 printf '    "semantic_bridge_runtime_accumulate_raw_jvp_calls": %s,\n' "$(count_matches "ida_raw_jvp_accumulate" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_context_input_declarations": %s,\n' "$(count_regex "llvm\\.func @__enzymexla_sundials_ida_context_input" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_accumulate_raw_jvp_declarations": %s,\n' "$(count_regex "llvm\\.func @__enzymexla_sundials_ida_accumulate_raw_jvp" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_context_registration_calls": %s,\n' "$(count_matches "ida_jvp_context_registration" "${bridge_runtime_mlir}")" >> "${summary}"
+printf '    "semantic_bridge_runtime_context_registration_declarations": %s,\n' "$(count_regex "llvm\\.func @__enzymexla_sundials_ida_register_jvp_context" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_raw_jvp_kernel_attrs": %s,\n' "$(count_matches "enzymexla.sundials.runtime_raw_jvp_kernel" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_lowered_raw_jvp_kernel_attrs": %s,\n' "$(count_matches "enzymexla.sundials.lowered_raw_jvp_kernel" "${bridge_runtime_mlir}")" >> "${summary}"
 printf '    "semantic_bridge_runtime_nvector_data_access_calls": %s,\n' "$(count_regex "llvm\\.call @N_VGetArrayPointer" "${bridge_runtime_mlir}")" >> "${summary}"

@@ -187,6 +187,8 @@ marked_attributes.semantic_bridge_runtime_context_input_calls = 4
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_calls = 1
 marked_attributes.semantic_bridge_runtime_context_input_declarations = 1
 marked_attributes.semantic_bridge_runtime_accumulate_raw_jvp_declarations = 1
+marked_attributes.semantic_bridge_runtime_context_registration_calls = 1
+marked_attributes.semantic_bridge_runtime_context_registration_declarations = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernel_attrs = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernel_attrs = 0
 marked_attributes.semantic_bridge_runtime_nvector_data_access_calls = 7
@@ -311,10 +313,14 @@ evidence. The follow-on `--emit-sundials-ida-runtime-glue-llvm` pass consumes
 that selected solve and emits
 `gridkit_semantic_bridge_runtime_glue.mlir`: an LLVM-dialect JacTimes callback
 symbol, SUNDIALS declarations, and a registration helper that constructs
-`SUNLinSol_SPGMR`, calls `IDASetUserData`, calls `IDASetLinearSolver`, and
-registers the callback with `IDASetJacTimes`. The registration helper is marked
-with `enzymexla.sundials.callback_context = "user_data_argument"`, and the
-generated callback currently carries the selected Jacobian-action provenance.
+`SUNLinSol_SPGMR`, registers the generated JVP context with
+`__enzymexla_sundials_ida_register_jvp_context`, calls `IDASetUserData`, calls
+`IDASetLinearSolver`, and registers the callback with `IDASetJacTimes`. The
+registration helper is marked with
+`enzymexla.sundials.callback_context = "ida_jvp_user_data_context"`, making the
+fourth helper argument an explicit reusable `IdaJvpUserData` context pointer
+rather than an untyped model pointer. The generated callback currently carries
+the selected Jacobian-action provenance.
 When the selected `jacobian_action` already names an LLVM function with the IDA
 JacTimes callback ABI, the generated callback delegates to that lowered JVP
 kernel and returns its status. When the selected action is still a semantic
@@ -348,9 +354,10 @@ GridKit now provides a reusable `IdaJvpUserData` support layer with C ABI entry
 points for registering generated callback contexts, unwrapping the original
 model pointer for legacy residual/Jacobian callbacks, accessing context inputs,
 and accumulating the y/yp JVP contributions. The remaining executable gap is
-host splicing: lowered code still has to construct and register that context
-object around the generated `IDASetJacTimes` helper. If those preconditions
-fail, the fallback raw kernel is still marked
+host splicing: lowered code still has to construct an `IdaJvpUserData` object,
+pass it into the generated `IDASetJacTimes` helper, and emit teardown through
+`__enzymexla_sundials_ida_unregister_jvp_context`. If those preconditions fail,
+the fallback raw kernel is still marked
 `semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
 provenance-matching raw kernels are rejected rather than chosen arbitrarily.
 
@@ -511,11 +518,16 @@ llvm.func @IDASetLinearSolver(...)
 llvm.func @IDASetJacTimes(...)
 llvm.func @N_VGetArrayPointer(...)
 llvm.func @N_VScale(...)
+llvm.func @__enzymexla_sundials_ida_register_jvp_context(...)
 ```
 
 The solve is annotated with `enzymexla.sundials.runtime_jactimes_callback` and
 `enzymexla.sundials.runtime_registration`. This is generated callback and
-registration machinery. If the selected action has already been lowered to an
+registration machinery. The registration helper is marked
+`enzymexla.sundials.callback_context = "ida_jvp_user_data_context"` and calls
+`__enzymexla_sundials_ida_register_jvp_context` before `IDASetUserData`, so
+IDA's `user_data` pointer is the generated JVP context recognized by the
+runtime support library. If the selected action has already been lowered to an
 LLVM function with the JacTimes ABI, the callback body calls it and is marked
 `enzymexla.sundials.callback_body = "delegates_jvp_kernel"`. If the selected
 action is still semantic, the pass generates
