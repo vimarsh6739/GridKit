@@ -887,6 +887,62 @@ explicit-matrix direct solve leaves the materialized Jacobian path explicit.
 The rejection test checks that unsupported matrix inspection prevents the
 semantic JVP rewrite.
 
+## Evaluation Snapshot
+
+`GridKit/scripts/evaluate_reactant_jvp_pipeline.sh` consumes the existing
+legacy SUNDIALS baseline summary and Reactant export summary, then writes a
+machine-readable Phase 8 snapshot:
+
+```bash
+bash GridKit/scripts/evaluate_reactant_jvp_pipeline.sh
+```
+
+The report is written to:
+
+```text
+GridKit/build/reactant-jacobian-export/reactant/gridkit_reactant_jvp_evaluation.json
+```
+
+The script does not rebuild by default. To regenerate the expensive producers
+first:
+
+```bash
+GRIDKIT_EVALUATION_RUN_BASELINE=1 \
+GRIDKIT_EVALUATION_RUN_REACTANT_EXPORT=1 \
+  bash GridKit/scripts/evaluate_reactant_jvp_pipeline.sh
+```
+
+The current report records:
+
+```text
+A explicit sparse Jacobian + KLU: ok
+  IDATest ctest case time: 0.00 sec, total: 0.01 sec
+  ThreeBusClassical ctest case time: 0.01 sec, total: 0.01 sec
+  detailed KLU solver counters: unavailable in current baseline logs
+
+B raised before JVP optimization: not executable as a separate solver path
+  semantic Jacobian materializations: 8
+  semantic Jacobian actions: 8
+  recovered explicit-matrix IDA solves: 3
+
+C compiler-generated JVP + iterative IDA: ok
+  component smoke: steps=14 residual_evals=19 nonlinear_iters=17
+    linear_iters=37 jac_times_evals=37 explicit_jacobian_evals=0
+  SystemModel smoke: steps=18 residual_evals=25 nonlinear_iters=23
+    linear_iters=104 jac_times_evals=104 explicit_jacobian_evals=0
+
+D hand-written MatrixFree JVP prototype: ok as an oracle only
+  finite-difference, explicit CSR/sparse, and MatrixFree checks all pass
+```
+
+The report explicitly sets `direct_speedup_claim = false`. The current evidence
+separates materialization avoidance from solver choice: the generated path
+proves automatic JacTimes registration, JVP activity, and zero solver-time
+explicit Jacobian evaluations, but it changes the linear solver from KLU direct
+to SPGMR iterative. Derivative wall time, sparse assembly time, JVP wall time,
+memory, and KLU iteration/Jacobian counters still require additional
+instrumentation before they can be used for a performance claim.
+
 ## Current Reactant Limitation
 
 Loading the Bazel-built Reactant plugin directly into a separately built `opt`
