@@ -194,6 +194,7 @@ marked_attributes.semantic_bridge_runtime_context_registration_helper_calls = 1
 marked_attributes.semantic_bridge_runtime_context_registration_declarations = 1
 marked_attributes.semantic_bridge_runtime_context_create_calls = 1
 marked_attributes.semantic_bridge_runtime_context_destroy_calls = 1
+marked_attributes.semantic_bridge_runtime_context_output_size_calls = 1
 marked_attributes.semantic_bridge_runtime_context_create_declarations = 1
 marked_attributes.semantic_bridge_runtime_context_destroy_declarations = 1
 marked_attributes.semantic_bridge_runtime_raw_jvp_kernel_attrs = 1
@@ -201,9 +202,11 @@ marked_attributes.semantic_bridge_runtime_context_setup_attrs = 1
 marked_attributes.semantic_bridge_runtime_context_teardown_attrs = 1
 marked_attributes.semantic_bridge_runtime_lowered_raw_jvp_kernel_attrs = 0
 marked_attributes.semantic_bridge_runtime_nvector_data_access_calls = 7
+marked_attributes.semantic_bridge_runtime_nvector_length_calls = 1
 marked_attributes.semantic_bridge_runtime_yp_tangent_scale_calls = 1
 marked_attributes.semantic_bridge_runtime_yp_tangent_scale_roles = 1
 marked_attributes.semantic_bridge_runtime_nvector_scale_declarations = 1
+marked_attributes.semantic_bridge_runtime_nvector_length_declarations = 1
 marked_attributes.semantic_bridge_runtime_user_data_registration_calls = 1
 marked_attributes.semantic_bridge_runtime_user_data_registration_roles = 1
 marked_attributes.semantic_bridge_runtime_user_data_declarations = 1
@@ -326,6 +329,8 @@ symbol, SUNDIALS declarations, and a registration helper that constructs
 `__enzymexla_sundials_ida_register_jvp_context`, calls `IDASetUserData`, calls
 `IDASetLinearSolver`, and registers the callback with `IDASetJacTimes`. The
 same pass now also emits a host-facing context setup helper that calls
+`N_VGetLength(yy)` to derive the residual output size, marks that call with
+`enzymexla.sundials.role = "ida_jvp_context_output_size"`, calls
 `__enzymexla_sundials_ida_create_jvp_context`, stores the resulting context
 pointer through an out parameter, and delegates to the generated registration
 helper, plus a teardown helper that calls
@@ -369,11 +374,12 @@ points for creating, registering, destroying, and discovering generated callback
 contexts, unwrapping the original model pointer for legacy residual/Jacobian
 callbacks, accessing context inputs, and accumulating the y/yp JVP
 contributions. The remaining executable gap is host splicing: lowered code
-still has to build the residual input pointer array and output-size operands,
-call the generated context setup helper from the host configuration path, keep
-the returned context pointer alive for IDA, and call the generated teardown
-helper when the solver no longer needs the callback. If those preconditions
-fail, the fallback raw kernel is still marked
+still has to build the residual input pointer array, call the generated context
+setup helper from the host configuration path, keep the returned context pointer
+alive for IDA, and call the generated teardown helper when the solver no longer
+needs the callback. The setup helper now derives the output size from the IDA
+`yy` template via `N_VGetLength`, so host splicing no longer has to supply that
+operand. If those preconditions fail, the fallback raw kernel is still marked
 `semantic_raw_kernel_requires_lowering` and returns a nonzero status. Multiple
 provenance-matching raw kernels are rejected rather than chosen arbitrarily.
 
@@ -530,13 +536,14 @@ llvm.func @__enzymexla_sundials_ida_register_jactimes_N(
     %ida_mem, %yy, %sunctx, %user_data)
 llvm.func @__enzymexla_sundials_ida_setup_jactimes_N(
     %ida_mem, %yy, %sunctx, %model, %inputs, %input_count,
-    %output_size, %context_out)
+    %context_out)
 llvm.func @__enzymexla_sundials_ida_teardown_jactimes_N(%user_data)
 llvm.func @SUNLinSol_SPGMR(...)
 llvm.func @IDASetUserData(...)
 llvm.func @IDASetLinearSolver(...)
 llvm.func @IDASetJacTimes(...)
 llvm.func @N_VGetArrayPointer(...)
+llvm.func @N_VGetLength(...)
 llvm.func @N_VScale(...)
 llvm.func @__enzymexla_sundials_ida_register_jvp_context(...)
 llvm.func @__enzymexla_sundials_ida_create_jvp_context(...)
@@ -656,7 +663,8 @@ for the same materializer. The runtime-glue lowering test checks that a
 selected matrix-free IDA solve emits SUNDIALS declarations, a generated
 JacTimes callback symbol, and a registration helper with `SUNLinSol_SPGMR`,
 `IDASetUserData`, `IDASetLinearSolver`, and `IDASetJacTimes`. The same test now
-also covers the semantic-action adapter path through `N_VScale`,
+also covers context output-size discovery through `N_VGetLength`, the
+semantic-action adapter path through `N_VScale`,
 `N_VGetArrayPointer`, the generated raw-buffer kernel boundary, and the
 callback-to-JVP-kernel delegation case when
 `jacobian_action` resolves to an ABI-compatible LLVM function or to a unique
@@ -690,8 +698,8 @@ repeatable artifact path and records the default-pipeline crash separately.
    the synthesized Jacobian action records, or raise both source regions in one
    artifact so no overlay is needed.
 2. Splice the generated context setup and teardown helpers into the host
-   executable path, including model, residual input-array, output-size, and
-   context-lifetime plumbing.
+   executable path, including model, residual input-array, and context-lifetime
+   plumbing.
 3. Run a full GridKit IDA simulation through the generated JVP path without
    requiring a manual `MatrixFreeJvp` or manual `IDASetJacTimes` call.
 4. Either narrow the Reactant default pipeline around this source region or fix
